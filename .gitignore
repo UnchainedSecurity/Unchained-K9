@@ -1,0 +1,13 @@
+# Node
+node_modules/
+dist/
+.env
+
+# Python
+__pycache__/
+*.pyc
+/opt/venv/
+
+# Workspace (Ignore all recon data, but keep the folder)
+workspace/*
+!workspace/.gitkeep
