@@ -1,4 +1,3 @@
-```markdown
 # 🐺 BlackHound K9 (Alpha)
 
 ![Version](https://img.shields.io/badge/version-Alpha_V3.6-red)
