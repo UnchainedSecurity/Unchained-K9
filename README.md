@@ -48,7 +48,7 @@ http://localhost:5173
 
 ## ⚙️ AI Engine Configuration
 BlackHound K9 is Provider Agnostic. You can use your own local GPU or route through the cloud via the Advanced Settings UI:
-* **Cloud Models (Recommended):** Point the API URL to `https://openrouter.ai/api/v1`, enter your API key, and use frontier models like `anthropic/claude-3.5-sonnet` or `poolside/laguna-xs.2:free`.
+* **Cloud Models (Recommended):** Point the API URL to `https://openrouter.ai/api/v1`, enter your API key, and use frontier models like `anthropic/claude-opus-4.8` or `nvidia/nemotron-3-ultra-550b-a55b`.
 * **Local Models:** Point the API URL to `http://host.docker.internal:11434/v1` (Ollama) or your `llama.cpp` server's address.
 
 ## ⚠️ Legal Disclaimer
