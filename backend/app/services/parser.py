@@ -31,6 +31,22 @@ def parse_ports() -> List[Finding]:
 def parse_ffuf() -> List[Finding]:
     return [Finding(type="Directory", value=e.get("url") or e.get("input",{}).get("FUZZ") or "", severity="Low") for e in (_safe_read_json(WORKSPACE_DIR / "ffuf.json").get("results", []) if isinstance(_safe_read_json(WORKSPACE_DIR / "ffuf.json"), dict) else [])]
 
+def parse_vhost(targets: List[str]) -> List[Finding]:
+    findings = []
+    for t in targets:
+        data = _safe_read_json(WORKSPACE_DIR / f"vhost_{t}.json")
+        if isinstance(data, dict):
+            results = data.get("results", [])
+        elif isinstance(data, list):
+            results = data
+        else:
+            results = []
+        for e in results:
+            fuzz_val = e.get("input", {}).get("FUZZ", "")
+            if fuzz_val:
+                findings.append(Finding(type="VHost", value=f"{fuzz_val}.{t}", severity="Medium"))
+    return list({(f.type, f.value): f for f in findings}.values())
+
 def parse_whatweb() -> List[TechFinding]:
     data = _safe_read_json(WORKSPACE_DIR / "whatweb.json")
     if isinstance(data, dict): data = [data]
@@ -42,6 +58,17 @@ def parse_katana() -> List[Finding]:
     if isinstance(data, dict): data = [data]
     findings = [Finding(type="Endpoint", value=o.get("request",{}).get("endpoint") or o.get("endpoint") or "", severity="Info") for o in data if o.get("request",{}).get("endpoint") or o.get("endpoint")]
     return list({(f.type, f.value): f for f in findings}.values())
+
+def parse_wafw00f() -> List[TechFinding]:
+    data = _safe_read_json(WORKSPACE_DIR / "waf.json")
+    if isinstance(data, dict): data = [data]
+    techs = []
+    for e in data:
+        if e.get("detected"):
+            waf_name = e.get("firewall") or "Unknown WAF"
+            url = e.get("url") or ""
+            techs.append(TechFinding(technology=waf_name, location=url, category="WAF", evidence="wafw00f"))
+    return list({(t.technology, t.location): t for t in techs}.values())
 
 def parse_dalfox() -> List[Finding]:
     data = _safe_read_json(WORKSPACE_DIR / "dalfox.json")
@@ -214,53 +241,4 @@ Findings:
         except Exception as e:
             await ws_manager.broadcast(f"[!] AI enrichment failed: {e}")
             await asyncio.sleep(5)
-    return unique_findings
-
-    if len(unique_findings) > 500: await ws_manager.broadcast(f"[!] Warning: Truncating {len(unique_findings)} findings to top 500 for AI context limit.")
-    
-    items_to_process = unique_findings[:500]
-    client = AsyncOpenAI(api_key=resolved_key, base_url=resolved_url)
-    
-    for i in range(0, len(items_to_process), 100):
-        batch = items_to_process[i:i + 100]
-        payload = [{"type": f.type, "value": f.value, "severity": f.severity} for f in batch]
-        
-        # Gemma 4's Fix: Strict Markdown Prohibition
-        prompt = f"""You are a Lead Bug Bounty Triage Analyst. Evaluate these raw recon findings.
-Nuclei findings already have accurate severities—do NOT change them. 
-For all other findings, you MUST apply Context-Aware Heuristics:
-1. Subdomain Context: A finding on 'dev.', 'staging.', or 'admin.' is higher severity than 'www.'.
-2. Port Context: Port 80/443 is Info. Exposed databases (3306, 5432), management ports (22, 2082), or weird high ports should be Medium/High.
-3. File/Directory Context: Generic paths (images, css) are Info. Exposure of source code (.git), environment variables (.env), config files, or admin panels are High/Critical.
-4. Katana/WhatWeb Context: General framework fingerprints are Info. 
-
-CRITICAL INSTRUCTIONS:
-- Return ONLY a valid JSON array.
-- DO NOT assume protocols based on path names (e.g., an HTTP directory named '/ftp' is just a web directory, do NOT invent anonymous FTP login attacks). Evaluate the literal HTTP risk.
-- DO NOT hallucinate vulnerabilities not explicitly proven by the tools.
-- DO NOT format values as Markdown links. Keep the exact original 'type' and 'value' strings.
-- Modify ONLY the 'severity' field to (Info, Low, Medium, High, Critical).
-
-Format: [{{"type": "...", "value": "...", "severity": "..."}}]
-Findings:
-{json.dumps(payload)}"""
-
-        try:
-            await ws_manager.broadcast(f"[*] Processing AI Batch {i//100 + 1} ({len(batch)} findings)...")
-            response = await client.chat.completions.create(
-                model=resolved_model, messages=[{"role": "user", "content": prompt}],
-                temperature=temp, top_p=top_p, extra_body={"top_k": top_k, "min_p": min_p}
-            )
-            ai_text = response.choices[0].message.content or "[]"
-            parsed_data = extract_json(ai_text)
-            if parsed_data is None: parsed_data = []
-            if isinstance(parsed_data, dict): parsed_data = parsed_data.get("findings", parsed_data.get("results", []))
-            if parsed_data is None: parsed_data = []
-            severity_map = { (item.get("type"), item.get("value")): item.get("severity", "Unknown") for item in parsed_data if isinstance(item, dict) }
-            for f in batch:
-                mapped = severity_map.get((f.type, f.value))
-                if mapped in ["Info", "Low", "Medium", "High", "Critical"]:
-                    if not f.type.startswith("Nuclei:"): f.severity = mapped
-        except Exception as e:
-            await ws_manager.broadcast(f"[!] AI enrichment failed: {e}")
     return unique_findings

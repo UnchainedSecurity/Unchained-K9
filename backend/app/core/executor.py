@@ -42,7 +42,7 @@ async def cancel_active_scan():
     return False
 
 # RETRY LOGIC PROPERLY IMPLEMENTED HERE
-async def run_tool(command: list[str], output_file: str, timeout: int = 900, retries: int = 0) -> bool:
+async def run_tool(command: list[str], output_file: str, timeout: int = 900, retries: int = 0, proxy_url: str = None) -> bool:
     global active_process
     safe_output_path = (WORKSPACE_DIR / output_file).resolve()
     if not safe_output_path.is_relative_to(WORKSPACE_DIR): return False
@@ -52,10 +52,15 @@ async def run_tool(command: list[str], output_file: str, timeout: int = 900, ret
         if attempt > 0: await ws_manager.broadcast(f"[*] Retrying {' '.join(command[:2])}... (Attempt {attempt + 1})")
         else: await ws_manager.broadcast(f"> Executing: {' '.join(command)}")
 
+        custom_env = os.environ.copy()
+        if proxy_url:
+            custom_env["HTTP_PROXY"] = proxy_url
+            custom_env["HTTPS_PROXY"] = proxy_url
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                cwd=str(WORKSPACE_DIR), start_new_session=True, limit=10485760 
+                cwd=str(WORKSPACE_DIR), env=custom_env, start_new_session=True, limit=10485760 
             )
             active_process = process
 

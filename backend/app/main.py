@@ -17,7 +17,7 @@ scan_lock = asyncio.Lock()
 current_scan_task = None
 
 class ScanRequest(BaseModel):
-    target: str = Field(..., min_length=3, max_length=253)
+    targets: list[str] = Field(..., min_items=1)
     threads: int = 50
     scan_depth: str = "Normal"
     api_url: str = ""
@@ -27,8 +27,10 @@ class ScanRequest(BaseModel):
     top_k: int = 64
     top_p: float = 0.95
     min_p: float = 0.0
-    wordlist: str = "common"
-    custom_header: str = ""  # NEW: Safe Harbor Compliance Header
+    wordlist: list = ["quick", "backups", "admin_panels"]
+    custom_headers: list[str] = []  # NEW: Multiple Custom Headers
+    proxy_url: str = ""
+    webhook_url: str = ""
     rate_limit: int = 150
     toggles: dict = {}
 
@@ -43,10 +45,10 @@ async def websocket_logs(websocket: WebSocket):
     except Exception:
         ws_manager.disconnect(websocket)
 
-async def _pipeline_wrapper(target, threads, depth, api_url, api_key, model, temp, tk, tp, mp, wl, custom_header, rate_limit, togs):
+async def _pipeline_wrapper(targets, threads, depth, api_url, api_key, model, temp, tk, tp, mp, wl, custom_headers, rate_limit, togs, proxy_url, webhook_url):
     global SCAN_IN_PROGRESS
     try:
-        await run_pipeline(target, threads, depth, api_url, api_key, model, temp, tk, tp, mp, wl, custom_header, rate_limit, togs)
+        await run_pipeline(targets, threads, depth, api_url, api_key, model, temp, tk, tp, mp, wl, custom_headers, rate_limit, togs, proxy_url, webhook_url)
     except asyncio.CancelledError:
         await ws_manager.broadcast("\n[!] Pipeline script terminated successfully.")
     except Exception as e:
@@ -59,11 +61,14 @@ async def _pipeline_wrapper(target, threads, depth, api_url, api_key, model, tem
 async def start_scan(req: ScanRequest):
     global SCAN_IN_PROGRESS, current_scan_task
     
-    target = req.target.lower().strip()
-    target = target.replace("http://", "").replace("https://", "").rstrip("/")
+    clean_targets = []
+    for t in req.targets:
+        t = t.lower().strip().replace("http://", "").replace("https://", "").rstrip("/")
+        if re.match(r"^[a-zA-Z0-9.-]+(:\d+)?$", t):
+            clean_targets.append(t)
 
-    if not re.match(r"^[a-zA-Z0-9.-]+(:\d+)?$", target):
-        raise HTTPException(status_code=400, detail="Invalid format. Use domain.com or IP:PORT")
+    if not clean_targets:
+        raise HTTPException(status_code=400, detail="No valid targets provided.")
 
     async with scan_lock:
         if SCAN_IN_PROGRESS:
@@ -75,8 +80,8 @@ async def start_scan(req: ScanRequest):
             file.unlink()
 
     current_scan_task = asyncio.create_task(_pipeline_wrapper(
-        target, req.threads, req.scan_depth, req.api_url, req.api_key, req.model_name,
-        req.temperature, req.top_k, req.top_p, req.min_p, req.wordlist, req.custom_header, req.rate_limit, req.toggles
+        clean_targets, req.threads, req.scan_depth, req.api_url, req.api_key, req.model_name,
+        req.temperature, req.top_k, req.top_p, req.min_p, req.wordlist, req.custom_headers, req.rate_limit, req.toggles, req.proxy_url, req.webhook_url
     ))
     return {"status": "queued"}
 
