@@ -1,3 +1,4 @@
+import asyncio
 import os, json, re
 from pathlib import Path
 from typing import List
@@ -74,19 +75,25 @@ def parse_nuclei() -> tuple[List[Finding], List[TechFinding]]:
     return findings, unique_techs
 
 def extract_json(text: str) -> list:
-    try: return json.loads(text)
+    try: 
+        res = json.loads(text)
+        return res if res is not None else []
     except: pass
     match = re.search(r'```(?:json)?\s*(\[.*?\]|\{.*?\})\s*```', text, re.DOTALL)
     if match:
-        try: return json.loads(match.group(1))
+        try: 
+            res = json.loads(match.group(1))
+            return res if res is not None else []
         except: pass
     start, end = text.find('['), text.rfind(']')
     if start != -1 and end != -1:
-        try: return json.loads(text[start:end+1])
+        try: 
+            res = json.loads(text[start:end+1])
+            return res if res is not None else []
         except: pass
     return []
 
-async def generate_ai_assessment(findings: List[Finding], api_url, api_key, model_name, temp, top_k, top_p, min_p) -> str:
+async def generate_ai_assessment(findings: List[Finding], tech_findings: List[TechFinding], api_url, api_key, model_name, temp, top_k, top_p, min_p) -> str:
     resolved_url = api_url.strip() if api_url else os.getenv("LLAMA_API_URL", "")
     resolved_model = model_name.strip() if model_name else os.getenv("AI_MODEL_NAME", "")
     resolved_key = api_key.strip() if api_key else "local-only"
@@ -101,19 +108,33 @@ async def generate_ai_assessment(findings: List[Finding], api_url, api_key, mode
     client = AsyncOpenAI(api_key=resolved_key, base_url=resolved_url)
     
     payload = [{"type": f.type, "value": f.value, "severity": f.severity} for f in filtered[:200]]
-    prompt = f"""You are a Red Team Lead. Based on these recon findings, write a 2-3 paragraph Executive Summary of the attack surface, followed by 2-3 bullet points of potential attack vectors or exploit chains the tester should try next. Use Markdown formatting.
+    tech_payload = [{"technology": t.technology, "location": t.location} for t in tech_findings[:50]]
+    
+    prompt = f"""You are a Red Team Lead. Based on these recon findings and the infrastructure profile, write a 2-3 paragraph Executive Summary of the attack surface, a summary of the infrastructure profile based on your interpretation of the findings, followed by 2-3 bullet points of potential attack vectors or exploit chains the tester should try next. Use Markdown formatting.
 
 Findings:
-{json.dumps(payload)}"""
+{json.dumps(payload)}
+
+Infrastructure:
+{json.dumps(tech_payload)}"""
 
     try:
         response = await client.chat.completions.create(
             model=resolved_model, messages=[{"role": "user", "content": prompt}],
-            temperature=temp, top_p=top_p, extra_body={"top_k": top_k, "min_p": min_p}
+            temperature=temp, top_p=top_p, extra_body={"top_k": top_k, "min_p": min_p},
+            timeout=120.0, stream=True
         )
-        return response.choices[0].message.content or "No response from AI."
+        full_text = ""
+        async for chunk in response:
+            content = chunk.choices[0].delta.content
+            if content:
+                full_text += content
+                await ws_manager.broadcast(f"[AI_STREAM]{content}")
+        return full_text
     except Exception as e:
         return f"AI Assessment failed: {e}"
+
+import asyncio
 
 async def analyze_findings_with_ai(findings: List[Finding], api_url, api_key, model_name, temp, top_k, top_p, min_p) -> List[Finding]:
     if not findings: return findings
@@ -126,6 +147,74 @@ async def analyze_findings_with_ai(findings: List[Finding], api_url, api_key, mo
     if not resolved_url or not resolved_model:
         await ws_manager.broadcast("[*] Running in Non-AI Mode. Returning deterministic findings.")
         return unique_findings
+
+    def is_junk(f: Finding):
+        v = str(f.value).lower()
+        if f.type == "Open Port" and v.split(":")[-1] in ["80", "443"]: return True
+        if f.type == "Directory":
+            if any(ext in v for ext in [".css", ".png", ".jpg", ".jpeg", ".svg", ".ico", ".gif"]): return True
+            if any(p in v for p in ["/images", "/css", "/assets", "/fonts", "/js"]): return True
+        return False
+
+    items_to_process = [f for f in unique_findings if not is_junk(f)][:750]
+    
+    if len(items_to_process) < len(unique_findings):
+        await ws_manager.broadcast(f"[*] Junk Filter: Ignored {len(unique_findings) - len(items_to_process)} standard findings to save AI tokens.")
+
+    client = AsyncOpenAI(api_key=resolved_key, base_url=resolved_url)
+    
+    from app.services.recon import target_domain, WORKSPACE_DIR
+    import json
+    
+    for i in range(0, len(items_to_process), 50):
+        batch = items_to_process[i:i + 50]
+        payload = [{"type": f.type, "value": f.value, "severity": f.severity} for f in batch]
+        
+        prompt = f"""You are a Lead Bug Bounty Triage Analyst. Evaluate these raw recon findings.
+Nuclei findings already have accurate severities—do NOT change them. 
+For all other findings, you MUST apply Context-Aware Heuristics:
+1. Subdomain Context: A finding on 'dev.', 'staging.', or 'admin.' is higher severity than 'www.'.
+2. Port Context: Port 80/443 is Info. Exposed databases (3306, 5432), management ports (22, 2082), or weird high ports should be Medium/High.
+3. File/Directory Context: Generic paths (images, css) are Info. Exposure of source code (.git), environment variables (.env), config files, or admin panels are High/Critical.
+4. Katana/WhatWeb Context: General framework fingerprints are Info. 
+
+CRITICAL INSTRUCTIONS:
+- Return ONLY a valid JSON array.
+- DO NOT assume protocols based on path names (e.g., an HTTP directory named '/ftp' is just a web directory, do NOT invent anonymous FTP login attacks). Evaluate the literal HTTP risk.
+- DO NOT hallucinate vulnerabilities not explicitly proven by the tools.
+- DO NOT format values as Markdown links. Keep the exact original 'type' and 'value' strings.
+- Modify ONLY the 'severity' field to (Info, Low, Medium, High, Critical).
+
+Format: [{{"type": "...", "value": "...", "severity": "..."}}]
+Findings:
+{json.dumps(payload)}"""
+
+        try:
+            await ws_manager.broadcast(f"[*] Processing AI Batch {i//50 + 1} ({len(batch)} findings)...")
+            response = await client.chat.completions.create(
+                model=resolved_model, messages=[{"role": "user", "content": prompt}],
+                temperature=temp, top_p=top_p, extra_body={"top_k": top_k, "min_p": min_p},
+                timeout=120.0
+            )
+            ai_text = response.choices[0].message.content or "[]"
+            parsed_data = extract_json(ai_text)
+            if parsed_data is None: parsed_data = []
+            if isinstance(parsed_data, dict): parsed_data = parsed_data.get("findings", parsed_data.get("results", []))
+            if parsed_data is None: parsed_data = []
+            severity_map = { (item.get("type"), item.get("value")): item.get("severity", "Unknown") for item in parsed_data if isinstance(item, dict) }
+            for f in batch:
+                mapped = severity_map.get((f.type, f.value))
+                if mapped in ["Info", "Low", "Medium", "High", "Critical"]:
+                    if not f.type.startswith("Nuclei:"): f.severity = mapped
+            
+            # Send batch update
+            await ws_manager.broadcast("[HUNT:BATCH_COMPLETED]")
+            await asyncio.sleep(5)
+            
+        except Exception as e:
+            await ws_manager.broadcast(f"[!] AI enrichment failed: {e}")
+            await asyncio.sleep(5)
+    return unique_findings
 
     if len(unique_findings) > 500: await ws_manager.broadcast(f"[!] Warning: Truncating {len(unique_findings)} findings to top 500 for AI context limit.")
     
@@ -164,7 +253,9 @@ Findings:
             )
             ai_text = response.choices[0].message.content or "[]"
             parsed_data = extract_json(ai_text)
+            if parsed_data is None: parsed_data = []
             if isinstance(parsed_data, dict): parsed_data = parsed_data.get("findings", parsed_data.get("results", []))
+            if parsed_data is None: parsed_data = []
             severity_map = { (item.get("type"), item.get("value")): item.get("severity", "Unknown") for item in parsed_data if isinstance(item, dict) }
             for f in batch:
                 mapped = severity_map.get((f.type, f.value))

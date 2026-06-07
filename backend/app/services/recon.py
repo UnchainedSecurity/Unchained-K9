@@ -155,12 +155,12 @@ async def run_pipeline(target_domain, threads, scan_depth, api_url, api_key, mod
     if toggles.get("run_dalfox", False) and params_file.exists() and params_file.stat().st_size > 0:
         dalfox_cmd = ["/usr/local/bin/dalfox", "file", str(params_file), "-b", "skip-bav", "--silence", "--format", "json", "--mining-dict=false", "-o", str(WORKSPACE_DIR / "dalfox.json")]
         if custom_header: dalfox_cmd.extend(["-H", custom_header])
-        await run_tool(dalfox_cmd, "dalfox.log", timeout=3600)
+        await run_tool(dalfox_cmd, "dalfox.log", timeout=14400)
     
     if toggles.get("run_nucleidast", False) and params_file.exists() and params_file.stat().st_size > 0:
         nucleidast_cmd = ["/usr/local/bin/nuclei", "-l", str(params_file), "-tags", "sqli,redirect,fuzz", "-j", "-o", str(WORKSPACE_DIR / "nucleidast.json"), "-c", safe_threads, "-rl", str(rate_limit), "-mhe", "100", "-timeout", "10"]
         nucleidast_cmd.extend(h_flag)
-        await run_tool(nucleidast_cmd, "nucleidast.log", timeout=900)
+        await run_tool(nucleidast_cmd, "nucleidast.log", timeout=7200)
 
     await ws_manager.broadcast("[PROGRESS] 4/5: Vulnerability Scanning")
     if toggles.get("run_nuclei", True) and alive_file.exists() and alive_file.stat().st_size > 0:
@@ -173,7 +173,7 @@ async def run_pipeline(target_domain, threads, scan_depth, api_url, api_key, mod
         nuclei_cmd.extend(["-rl", str(rate_limit)])
         nuclei_cmd.extend(["-mhe", "100", "-timeout", "10"])
         nuclei_cmd.extend(h_flag)
-        await run_tool(nuclei_cmd, "nuclei.log", timeout=3600)
+        await run_tool(nuclei_cmd, "nuclei.log", timeout=14400)
 
     await ws_manager.broadcast("[PROGRESS] 5/5: Context-Aware AI Triage")
     from app.services.parser import parse_ports, parse_ffuf, parse_whatweb, parse_katana, parse_nuclei, parse_dalfox, analyze_findings_with_ai, generate_ai_assessment
@@ -182,9 +182,14 @@ async def run_pipeline(target_domain, threads, scan_depth, api_url, api_key, mod
     tech_findings = parse_whatweb() + nuclei_tech
     
     enriched = await analyze_findings_with_ai(raw_findings, api_url, api_key, model_name, temp, top_k, top_p, min_p)
-    ai_assessment = await generate_ai_assessment(enriched, api_url, api_key, model_name, temp, top_k, top_p, min_p)
-    final_output = {"target": target_domain, "stage": "completed", "technologies": [t.model_dump() for t in tech_findings], "findings": [f.model_dump() for f in enriched], "ai_analysis": ai_assessment}
+    
+    # Save triage output before AI assessment
+    final_output = {"target": target_domain, "stage": "completed", "technologies": [t.model_dump() for t in tech_findings], "findings": [f.model_dump() for f in enriched], "ai_analysis": ""}
     (WORKSPACE_DIR / "final_report.json").write_text(json.dumps(final_output, indent=2))
     
     await ws_manager.broadcast("[+] Pipeline execution successful.")
-    await ws_manager.broadcast("[SENTINEL:COMPLETED]")
+    await ws_manager.broadcast("[HUNT:COMPLETED]")
+    
+    ai_assessment = await generate_ai_assessment(enriched, tech_findings, api_url, api_key, model_name, temp, top_k, top_p, min_p)
+    final_output["ai_analysis"] = ai_assessment
+    (WORKSPACE_DIR / "final_report.json").write_text(json.dumps(final_output, indent=2))

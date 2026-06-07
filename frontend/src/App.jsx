@@ -133,7 +133,7 @@ export default function App() {
         if (match) setProgress({ percent: Math.round((parseInt(match[1]) / parseInt(match[2])) * 100), label: match[3] })
         return
       }
-      if (msg === "[SENTINEL:COMPLETED]") {
+      if (msg === "[HUNT:COMPLETED]") {
         try {
           const res = await fetch('http://localhost:8000/results')
           const data = await res.json()
@@ -148,6 +148,21 @@ export default function App() {
           setStatus('error')
           setErrorMsg('Failed to fetch final results.')
         }
+        return
+      }
+      
+      if (msg === "[HUNT:BATCH_COMPLETED]") {
+        try {
+          const res = await fetch('http://localhost:8000/results')
+          const data = await res.json()
+          if (data.findings) setFindings(data.findings)
+          if (data.technologies) setTechnologies(data.technologies)
+        } catch (err) {}
+        return
+      }
+
+      if (msg.startsWith("[AI_STREAM]")) {
+        setAiAnalysis(prev => prev + msg.replace("[AI_STREAM]", ""))
         return
       }
       const isError = /\[!\]|error|failed|\[stats\]/i.test(msg);
