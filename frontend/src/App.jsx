@@ -87,9 +87,10 @@ export default function App() {
   const [minP, setMinP] = useState(0.0)
   
   const [wordlist, setWordlist] = useState('common')
-  const [toggles, setToggles] = useState({ run_harvester: true, run_gau: true, run_katana: true, run_nuclei: true })
+  const [toggles, setToggles] = useState({ run_harvester: true, run_gau: true, run_katana: true, run_nuclei: true, run_dalfox: false, run_nucleidast: false })
   
   const [logs, setLogs] = useState([])
+  const [errorLogs, setErrorLogs] = useState([])
   const [errorsOnly, setErrorsOnly] = useState(false)
   const [progress, setProgress] = useState({ percent: 0, label: '' })
   const [currentPage, setCurrentPage] = useState(1)
@@ -149,6 +150,8 @@ export default function App() {
         }
         return
       }
+      const isError = /\[!\]|error|failed|\[stats\]/i.test(msg);
+      if (isError) setErrorLogs(prev => [...prev, msg]);
       setLogs(prev => [...prev, msg].slice(-1000))
     }
     return () => { if (wsRef.current) wsRef.current.close() }
@@ -166,10 +169,7 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const filteredLogs = useMemo(() => {
-    if (!errorsOnly) return logs
-    return logs.filter(log => /\[!\]|error|failed|\[stats\]/i.test(log))
-  }, [logs, errorsOnly])
+
 
   const severityCounts = useMemo(() => {
     const counts = { Critical: 0, High: 0, Medium: 0, Low: 0, Info: 0, Unknown: 0 }
@@ -206,6 +206,7 @@ export default function App() {
     setTechnologies([])
     setAiAnalysis('')
     setLogs([])
+    setErrorLogs([])
     setProgress({ percent: 0, label: 'Initializing Pipeline...' })
 
     let finalThreads = 50
@@ -274,6 +275,8 @@ export default function App() {
     )
   }
 
+  const displayLogs = errorsOnly ? errorLogs : logs;
+
   return (
     <div className="min-h-full bg-[radial-gradient(circle_at_top,_rgba(185,28,28,0.12),_transparent_35%),linear-gradient(to_bottom,#020617,#030712_45%,#020617)] text-red-500">
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-8">
@@ -326,6 +329,8 @@ export default function App() {
                     <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_gau} onChange={e=>setToggles({...toggles, run_gau: e.target.checked})} /> GAU</label>
                     <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_katana} onChange={e=>setToggles({...toggles, run_katana: e.target.checked})} /> Katana</label>
                     <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_nuclei} onChange={e=>setToggles({...toggles, run_nuclei: e.target.checked})} /> Nuclei</label>
+                    <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_dalfox} onChange={e=>setToggles({...toggles, run_dalfox: e.target.checked})} /> Dalfox (XSS)</label>
+                    <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_nucleidast} onChange={e=>setToggles({...toggles, run_nucleidast: e.target.checked})} /> Nuclei DAST (SQLi/Redirect)</label>
                   </div>
                 </div>
               </div>
@@ -391,7 +396,7 @@ export default function App() {
             </button>
           </div>
           <div ref={terminalRef} className="flex-1 p-4 overflow-y-auto font-mono text-sm leading-relaxed">
-            {filteredLogs.length === 0 ? <p className="text-slate-600">Awaiting stream...</p> : filteredLogs.map((log, i) => (
+            {displayLogs.length === 0 ? <p className="text-slate-600">Awaiting stream...</p> : displayLogs.map((log, i) => (
               <div key={i} className={log.startsWith('>') ? 'text-blue-400 font-bold mt-2' : log.startsWith('[+]') ? 'text-green-400' : log.startsWith('[!]') ? 'text-red-400' : 'text-slate-300'}>{log}</div>
             ))}
           </div>

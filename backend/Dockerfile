@@ -32,6 +32,7 @@ RUN GOBIN=/usr/local/bin go install -v github.com/projectdiscovery/subfinder/v2/
     GOBIN=/usr/local/bin go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest && \
     GOBIN=/usr/local/bin go install -v -ldflags="-s -w" github.com/lc/gau/v2/cmd/gau@latest && \
     GOBIN=/usr/local/bin go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
+    GOBIN=/usr/local/bin go install -v github.com/hahwul/dalfox/v2@latest && \
     GOBIN=/usr/local/bin go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
     apt-get remove -y golang-go git && \
     apt-get autoremove -y && \

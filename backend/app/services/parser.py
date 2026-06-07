@@ -42,9 +42,23 @@ def parse_katana() -> List[Finding]:
     findings = [Finding(type="Endpoint", value=o.get("request",{}).get("endpoint") or o.get("endpoint") or "", severity="Info") for o in data if o.get("request",{}).get("endpoint") or o.get("endpoint")]
     return list({(f.type, f.value): f for f in findings}.values())
 
+def parse_dalfox() -> List[Finding]:
+    data = _safe_read_json(WORKSPACE_DIR / "dalfox.json")
+    if isinstance(data, dict): data = [data]
+    findings = []
+    for o in data:
+        if o.get("type") in ["V", "G", "S"] or o.get("poc"):
+            url = o.get("data") or o.get("url") or o.get("poc") or ""
+            if url: findings.append(Finding(type="XSS", value=url, severity="High"))
+    return list({(f.type, f.value): f for f in findings}.values())
+
 def parse_nuclei() -> tuple[List[Finding], List[TechFinding]]:
     data = _safe_read_json(WORKSPACE_DIR / "nuclei.json")
     if isinstance(data, dict): data = [data]
+    if (WORKSPACE_DIR / "nucleidast.json").exists():
+        dast_data = _safe_read_json(WORKSPACE_DIR / "nucleidast.json")
+        if isinstance(dast_data, list): data.extend(dast_data)
+        elif isinstance(dast_data, dict): data.append(dast_data)
     findings = []
     techs = []
     for o in data:
@@ -133,6 +147,8 @@ For all other findings, you MUST apply Context-Aware Heuristics:
 
 CRITICAL INSTRUCTIONS:
 - Return ONLY a valid JSON array.
+- DO NOT assume protocols based on path names (e.g., an HTTP directory named '/ftp' is just a web directory, do NOT invent anonymous FTP login attacks). Evaluate the literal HTTP risk.
+- DO NOT hallucinate vulnerabilities not explicitly proven by the tools.
 - DO NOT format values as Markdown links. Keep the exact original 'type' and 'value' strings.
 - Modify ONLY the 'severity' field to (Info, Low, Medium, High, Critical).
 
