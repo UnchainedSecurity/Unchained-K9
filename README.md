@@ -35,7 +35,7 @@ Unchained K9 is 100% containerized. You do not need to install Python or manage 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Unchained-Security/Unchained-K9.git
+git clone https://github.com/UnchainedSecurity/Unchained-K9.git
 cd Unchained-K9
 
 # 2. Build and launch the hounds (Detached Mode)
