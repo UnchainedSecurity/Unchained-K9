@@ -1,4 +1,4 @@
-# 🐺 BlackHound K9 (Alpha V3.6)
+# 🐺 BlackHound K9 (Alpha V3.14)
 
 ![Version](https://img.shields.io/badge/version-Alpha_V3.6-red)
 ![Docker](https://img.shields.io/badge/Docker-Containerized-blue)
