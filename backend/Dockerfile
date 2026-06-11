@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     theharvester \
     whatweb \
+    chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # Create Python Virtual Environment
@@ -42,6 +43,7 @@ RUN GOBIN=/usr/local/bin go install -v github.com/projectdiscovery/subfinder/v2/
     GOBIN=/usr/local/bin go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
     GOBIN=/usr/local/bin go install -v github.com/hahwul/dalfox/v2@latest && \
     GOBIN=/usr/local/bin go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
+    GOBIN=/usr/local/bin go install -v github.com/sensepost/gowitness@latest && \
     apt-get remove -y golang-go git && \
     apt-get autoremove -y && \
     rm -rf /root/go /var/cache/apt/archives

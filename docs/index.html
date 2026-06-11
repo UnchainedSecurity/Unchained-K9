@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BlackHound K9 | AI-Powered Recon</title>
+    <title>BlackHound K9 | AI-Powered Attack Surface Management</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script>
@@ -25,7 +25,7 @@
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col relative overflow-x-hidden">
-    
+
     <!-- Background Gradient -->
     <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-brand/20 blur-[120px] rounded-full pointer-events-none -z-10"></div>
 
@@ -33,7 +33,7 @@
     <nav class="w-full max-w-6xl mx-auto px-6 py-6 flex justify-between items-center z-10">
         <div class="flex items-center gap-3">
             <img src="logo.png" alt="BlackHound Logo" class="w-40 h-40 object-contain">
-            <span class="text-xl font-bold tracking-wider">BLACKHOUND <span class="text-brand">K9</span></span>
+            <span class="text-xl font-bold tracking-wider hidden sm:block">BLACKHOUND <span class="text-brand">K9</span></span>
         </div>
         <div class="flex gap-6 items-center text-sm font-medium">
             <a href="https://github.com/BlackHound-Security/BlackHound-K9" class="hover:text-brand transition">GitHub</a>
@@ -42,19 +42,19 @@
     </nav>
 
     <!-- Hero Section -->
-    <main class="flex-1 flex flex-col items-center justify-center text-center px-6 pt-20 pb-24 z-10">
+    <main class="flex-1 flex flex-col items-center justify-center text-center px-6 pt-10 pb-24 z-10">
         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full glass-card text-brand text-xs font-bold mb-6 uppercase tracking-widest border-brand/30">
-            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Alpha v3.3 Available Now
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i> Alpha V3.6 Available Now
         </div>
-        
+
         <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-6 max-w-4xl">
             Stop staring at terminals.<br> Let the <span class="text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-red-800">Hound</span> hunt.
         </h1>
-        
+
         <p class="text-lg md:text-xl text-slate-400 mb-10 max-w-2xl leading-relaxed">
-            An open-source, AI-augmented Bug Bounty Recon Dashboard. Chain industry-standard tools, evade WAFs, and let the AI write your exploit chains.
+            An open-source, AI-orchestrated Attack Surface Management (ASM) and DAST platform that turns chaotic terminal noise into paid bounties.
         </p>
-        
+
         <div class="flex flex-col sm:flex-row gap-4">
             <a href="https://github.com/BlackHound-Security/BlackHound-K9" class="px-8 py-4 bg-brand hover:bg-red-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition red-glow">
                 <i data-lucide="github" class="w-5 h-5"></i> View Repository
@@ -66,25 +66,51 @@
     </main>
 
     <!-- Features Section -->
-    <section id="features" class="w-full max-w-6xl mx-auto px-6 py-20 z-10">
+    <section id="features" class="w-full max-w-7xl mx-auto px-6 py-20 z-10">
         <h2 class="text-3xl font-bold text-center mb-16">Enterprise Features, <span class="text-brand">Open-Source</span> Freedom.</h2>
-        
-        <div class="grid md:grid-cols-3 gap-6">
-            <div class="glass-card p-8 rounded-2xl">
-                <i data-lucide="workflow" class="w-10 h-10 text-brand mb-4"></i>
-                <h3 class="text-xl font-bold mb-3">Deterministic Pipeline</h3>
-                <p class="text-slate-400 text-sm leading-relaxed">Fully Dockerized. Chains Subfinder, dnsx, Naabu, Httpx, Ffuf, and Nuclei automatically to map the entire attack surface.</p>
-            </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <!-- Feature 1 -->
             <div class="glass-card p-8 rounded-2xl relative overflow-hidden">
                 <div class="absolute top-0 right-0 w-32 h-32 bg-brand/10 blur-[30px] rounded-full pointer-events-none"></div>
+                <i data-lucide="network" class="w-10 h-10 text-brand mb-4"></i>
+                <h3 class="text-xl font-bold mb-3">Attack Surface Heatmap</h3>
+                <p class="text-slate-400 text-sm leading-relaxed">A dynamic visual tree that automatically collapses noisy UUIDs. Folders glow <span class="text-red-400 font-bold">Red</span> to guide your eyes straight to critical vulnerabilities.</p>
+            </div>
+
+            <!-- Feature 2 -->
+            <div class="glass-card p-8 rounded-2xl">
+                <i data-lucide="swords" class="w-10 h-10 text-brand mb-4"></i>
+                <h3 class="text-xl font-bold mb-3">Deep DAST & Fuzzing</h3>
+                <p class="text-slate-400 text-sm leading-relaxed">K9 extracts endpoints from Katana, feeds them to <code>x8</code> for hidden parameters, and fires <code>dalfox</code> for blind XSS and <code>nuclei</code> for SQLi fuzzing automatically.</p>
+            </div>
+
+            <!-- Feature 3 -->
+            <div class="glass-card p-8 rounded-2xl">
+                <i data-lucide="camera" class="w-10 h-10 text-brand mb-4"></i>
+                <h3 class="text-xl font-bold mb-3">Visual Recon & Cloud</h3>
+                <p class="text-slate-400 text-sm leading-relaxed">Auto-screenshots via <code>gowitness</code>, mmh3 favicon hashing to bypass stripped headers, and <code>cloud_enum</code> to hunt exposed AWS/GCP buckets.</p>
+            </div>
+
+            <!-- Feature 4 -->
+            <div class="glass-card p-8 rounded-2xl">
                 <i data-lucide="brain-circuit" class="w-10 h-10 text-brand mb-4"></i>
                 <h3 class="text-xl font-bold mb-3">Executive AI Triage</h3>
-                <p class="text-slate-400 text-sm leading-relaxed">BYOK (Bring Your Own Key). The AI filters out false positives and automatically generates copy-paste ready HackerOne exploit reports.</p>
+                <p class="text-slate-400 text-sm leading-relaxed">BYOK (Bring Your Own Key). The AI filters out the garbage and writes an Executive Summary with attack chains ready to copy-paste into HackerOne.</p>
             </div>
+
+            <!-- Feature 5 -->
             <div class="glass-card p-8 rounded-2xl">
-                <i data-lucide="shield-check" class="w-10 h-10 text-brand mb-4"></i>
-                <h3 class="text-xl font-bold mb-3">OPSEC & WAF Evasion</h3>
-                <p class="text-slate-400 text-sm leading-relaxed">Built-in Safe Harbor headers, custom rate limiting, and a "Sniper Mode" to test Critical CVEs without triggering Cloudflare tarpits.</p>
+                <i data-lucide="shield-alert" class="w-10 h-10 text-brand mb-4"></i>
+                <h3 class="text-xl font-bold mb-3">Weaponized OPSEC</h3>
+                <p class="text-slate-400 text-sm leading-relaxed">Configurable rate-limiting, custom Safe Harbor headers, and a "Sniper Mode" to test only Critical CVEs without triggering Cloudflare tarpits.</p>
+            </div>
+
+            <!-- Feature 6 -->
+            <div class="glass-card p-8 rounded-2xl">
+                <i data-lucide="bell-ring" class="w-10 h-10 text-brand mb-4"></i>
+                <h3 class="text-xl font-bold mb-3">Set & Forget Webhooks</h3>
+                <p class="text-slate-400 text-sm leading-relaxed">Fire up a massive Carpet Bomb scan on your VPS, go to sleep, and wake up to a Slack/Discord webhook containing your critical findings and AI report.</p>
             </div>
         </div>
     </section>
@@ -92,7 +118,7 @@
     <!-- Install Section -->
     <section id="install" class="w-full max-w-4xl mx-auto px-6 py-20 z-10 text-center">
         <h2 class="text-3xl font-bold mb-8">Deploy in seconds.</h2>
-        <div class="bg-black/60 border border-white/10 rounded-xl p-6 text-left font-mono text-sm sm:text-base text-green-400 overflow-x-auto shadow-2xl">
+        <div class="bg-black/60 border border-white/10 rounded-xl p-6 text-left font-mono text-sm sm:text-base text-green-400 overflow-x-auto shadow-2xl mx-auto inline-block min-w-[70%]">
             <p><span class="text-slate-500"># 1. Clone the repository</span></p>
             <p>git clone https://github.com/BlackHound-Security/BlackHound-K9.git</p>
             <p class="mt-4"><span class="text-slate-500"># 2. Enter the directory</span></p>
@@ -101,7 +127,6 @@
             <p>docker compose up -d --build</p>
             <p class="mt-4"><span class="text-slate-500"># 4. Access the command center</span></p>
             <p>Navigate to http://localhost:5173</p>
-
         </div>
     </section>
 

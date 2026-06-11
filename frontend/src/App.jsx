@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, ShieldAlert, Radar, Loader2, Sparkles, Settings, ChevronDown, ChevronUp, XCircle, Bug, ChevronLeft, ChevronRight, Download, Filter } from 'lucide-react'
+import { Search, ShieldAlert, Radar, Loader2, Sparkles, Settings, ChevronDown, ChevronUp, XCircle, Bug, ChevronLeft, ChevronRight, Download, Filter, Camera, History, Menu, Clock, Info, Save, Folder, FolderOpen, FileCode, FileText, Database, File, Globe } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-
+import AttackSurfaceMap from './components/AttackSurfaceMap'
+import { SeverityBadge } from './components/SeverityBadge'
 function escapeMarkdownCell(value) { return String(value ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim() }
 function downloadBlob(filename, content, type) {
   const blob = new Blob([content], { type })
@@ -35,21 +36,26 @@ function buildMarkdownReport(target, findings, technologies) {
     md += `| Type | Value |\n| --- | --- |\n`
     for (const finding of group) md += `| ${escapeMarkdownCell(finding.type)} | \`${escapeMarkdownCell(finding.value)}\` |\n`
     md += `\n`
+    md += `\n`
   }
+  
+  const filteredNoise = findings.filter(f => f.fp_reason)
+  if (filteredNoise.length > 0) {
+    const reasonCounts = {}
+    filteredNoise.forEach(f => {
+      reasonCounts[f.fp_reason] = (reasonCounts[f.fp_reason] || 0) + 1
+    })
+    md += `## Appendix: Filtered Noise\n\nK9 automatically filtered out the following False Positives:\n`
+    for (const [reason, count] of Object.entries(reasonCounts)) {
+      md += `- ${count}x ${escapeMarkdownCell(reason)}\n`
+    }
+    md += `\n`
+  }
+  
   return md
 }
 
-function SeverityBadge({ severity }) {
-  const styles = {
-    Critical: 'bg-red-500/20 text-red-400 border border-red-500/30',
-    High: 'bg-orange-500/20 text-orange-400 border border-orange-500/30',
-    Medium: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
-    Low: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
-    Info: 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30',
-    Unknown: 'bg-slate-500/20 text-slate-400 border border-slate-500/30'
-  }
-  return <span className={`px-2.5 py-1 text-xs font-semibold rounded-full ${styles[severity] || styles.Unknown}`}>{severity}</span>
-}
+
 
 function RenderValue({ value }) {
   const safeVal = String(value || '')
@@ -74,6 +80,8 @@ const WORDLIST_OPTIONS = [
 export default function App() {
   const [legalAccepted, setLegalAccepted] = useState(true)
   const [legalInput, setLegalInput] = useState('')
+  const [attackSurfaceTree, setAttackSurfaceTree] = useState([])
+  const [selectedTreeNodeId, setSelectedTreeNodeId] = useState(null)
 
   const [targets, setTargets] = useState('')
   const [findings, setFindings] = useState([])
@@ -84,6 +92,12 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
+  
+  const [showSidebar, setShowSidebar] = useState(false)
+  const [historyList, setHistoryList] = useState([])
+  const [currentScanId, setCurrentScanId] = useState(null)
+  
+  const [hideFalsePositives, setHideFalsePositives] = useState(true)
   
   const [noiseLevel, setNoiseLevel] = useState('Normal')
   const [customThreads, setCustomThreads] = useState(5)
@@ -101,8 +115,9 @@ export default function App() {
   const [minP, setMinP] = useState(0.0)
   
   const [wordlistCategories, setWordlistCategories] = useState(['quick', 'backups', 'admin_panels'])
+  const [screenshots, setScreenshots] = useState([])
   const [recursionDepth, setRecursionDepth] = useState(0)
-  const [toggles, setToggles] = useState({ run_harvester: true, run_gau: true, run_katana: true, run_nuclei: true, run_dalfox: false, run_nucleidast: false, run_vhost: false })
+  const [toggles, setToggles] = useState({ run_harvester: true, run_gau: true, run_katana: true, run_nuclei: true, run_dalfox: false, run_nucleidast: false, run_vhost: false, run_gowitness: true, run_favicon: true, run_js_secrets: false, run_cloud_enum: false })
   
   const [logs, setLogs] = useState([])
   const [errorLogs, setErrorLogs] = useState([])
@@ -116,26 +131,99 @@ export default function App() {
   const wsRef = useRef(null)
   const exportMenuRef = useRef(null)
 
+  const [profiles, setProfiles] = useState([])
+  const [expandedGroups, setExpandedGroups] = useState({})
+
   const toggleWordlist = (key) => {
     setWordlistCategories(prev => 
       prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
     )
   }
 
+  const loadProfiles = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/profiles')
+      setProfiles(await res.json())
+    } catch(e) {}
+  }
+
+  const applyProfile = (configStr) => {
+    try {
+      const conf = JSON.parse(configStr)
+      if (conf.customThreads !== undefined) setCustomThreads(conf.customThreads)
+      if (conf.rateLimit !== undefined) setRateLimit(conf.rateLimit)
+      if (conf.toggles) setToggles(conf.toggles)
+      if (conf.wordlistCategories) setWordlistCategories(conf.wordlistCategories)
+      if (conf.recursionDepth !== undefined) setRecursionDepth(conf.recursionDepth)
+      if (conf.apiUrl !== undefined) setApiUrl(conf.apiUrl)
+      if (conf.apiKey !== undefined) setApiKey(conf.apiKey)
+      if (conf.modelName !== undefined) setModelName(conf.modelName)
+      if (conf.temperature !== undefined) setTemperature(conf.temperature)
+      if (conf.topK !== undefined) setTopK(conf.topK)
+      if (conf.topP !== undefined) setTopP(conf.topP)
+      if (conf.minP !== undefined) setMinP(conf.minP)
+      if (conf.webhookUrl !== undefined) setWebhookUrl(conf.webhookUrl)
+    } catch(e) {}
+  }
+
+  const saveNewProfile = async () => {
+    const name = prompt("Enter a name for this profile:")
+    if (!name) return
+    const config_json = JSON.stringify({
+      customThreads, rateLimit, toggles, wordlistCategories, recursionDepth,
+      apiUrl, apiKey, modelName, temperature, topK, topP, minP, webhookUrl
+    })
+    try {
+      await fetch('http://localhost:8000/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, config_json })
+      })
+      await loadProfiles()
+    } catch(e) {
+      alert("Failed to save profile")
+    }
+  }
+
+  const loadHistory = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/history')
+      setHistoryList(await res.json())
+    } catch(e) {}
+  }
+
+  const loadScan = async (scanId = null) => {
+    try {
+      const url = scanId ? `http://localhost:8000/history/${scanId}` : 'http://localhost:8000/results'
+      const res = await fetch(url)
+      const data = await res.json()
+      if (data.stage === 'completed' && (data.findings?.length > 0 || data.technologies?.length > 0)) {
+        setFindings(data.findings || [])
+        setTechnologies(data.technologies || [])
+        setAiAnalysis(data.ai_analysis || '')
+        setScreenshots(data.screenshots || [])
+        setTargets(data.target || '')
+        if (data.scan_id) setCurrentScanId(data.scan_id)
+        setStatus('completed')
+        setProgress({ percent: 100, label: 'Loaded Previous Scan Data' })
+        
+        try {
+           const tUrl = scanId ? `http://localhost:8000/history/${scanId}/attack-surface` : 'http://localhost:8000/attack-surface'
+           const tRes = await fetch(tUrl)
+           const tData = await tRes.json()
+           setAttackSurfaceTree(JSON.parse(tData.tree || '[]'))
+        } catch(e) {
+           setAttackSurfaceTree([])
+        }
+      }
+    } catch(e) {}
+  }
+
   useEffect(() => {
     if (!localStorage.getItem('k9_legal_accepted')) setLegalAccepted(false)
-    fetch('http://localhost:8000/results')
-      .then(res => res.json())
-      .then(data => {
-        if (data.stage === 'completed' && (data.findings?.length > 0 || data.technologies?.length > 0)) {
-          setFindings(data.findings || [])
-          setTechnologies(data.technologies || [])
-          setAiAnalysis(data.ai_analysis || '')
-          setTargets(data.target || '')
-          setStatus('completed')
-          setProgress({ percent: 100, label: 'Loaded Previous Scan Data' })
-        }
-      }).catch(() => {})
+    loadHistory()
+    loadScan()
+    loadProfiles()
   }, [])
 
   const acceptLegal = () => {
@@ -155,20 +243,8 @@ export default function App() {
         return
       }
       if (msg === "[HUNT:COMPLETED]") {
-        try {
-          const res = await fetch('http://localhost:8000/results')
-          const data = await res.json()
-          if (data.stage === 'completed') {
-            setFindings(data.findings || [])
-            setTechnologies(data.technologies || [])
-            setAiAnalysis(data.ai_analysis || '')
-            setStatus('completed')
-            setProgress({ percent: 100, label: 'Scan Complete' })
-          }
-        } catch (err) {
-          setStatus('error')
-          setErrorMsg('Failed to fetch final results.')
-        }
+        await loadHistory()
+        await loadScan()
         return
       }
       
@@ -178,6 +254,7 @@ export default function App() {
           const data = await res.json()
           if (data.findings) setFindings(data.findings)
           if (data.technologies) setTechnologies(data.technologies)
+          if (data.screenshots) setScreenshots(data.screenshots)
         } catch (err) {}
         return
       }
@@ -212,10 +289,18 @@ export default function App() {
     return counts
   }, [findings])
 
+  const filteredFindings = useMemo(() => {
+    let filtered = findings
+    if (hideFalsePositives) {
+      filtered = filtered.filter(f => f.status !== 'False Positive' && !String(f.type).includes('[FP]'))
+    }
+    return filtered
+  }, [findings, hideFalsePositives])
+
   const searchedFindings = useMemo(() => {
-    if (!searchTerm) return findings
-    return findings.filter(f => String(f.value).toLowerCase().includes(searchTerm.toLowerCase()) || String(f.type).toLowerCase().includes(searchTerm.toLowerCase()))
-  }, [findings, searchTerm])
+    if (!searchTerm) return filteredFindings
+    return filteredFindings.filter(f => String(f.value).toLowerCase().includes(searchTerm.toLowerCase()) || String(f.type).toLowerCase().includes(searchTerm.toLowerCase()))
+  }, [filteredFindings, searchTerm])
 
   const sortedFindings = useMemo(() => {
     if (sortBy === 'original') return searchedFindings
@@ -223,12 +308,15 @@ export default function App() {
     return [...searchedFindings].sort((a, b) => (weights[b.severity] || 1) - (weights[a.severity] || 1))
   }, [searchedFindings, sortBy])
 
+
+
   const ITEMS_PER_PAGE = 50
   const totalPages = Math.max(1, Math.ceil(sortedFindings.length / ITEMS_PER_PAGE))
   const paginatedFindings = useMemo(() => {
     const start = (currentPage - 1) * ITEMS_PER_PAGE
     return sortedFindings.slice(start, start + ITEMS_PER_PAGE)
   }, [sortedFindings, currentPage])
+
 
   useEffect(() => { setCurrentPage(1) }, [sortBy, searchTerm, findings])
 
@@ -239,6 +327,7 @@ export default function App() {
     setErrorMsg('')
     setFindings([])
     setTechnologies([])
+    setScreenshots([])
     setAiAnalysis('')
     setLogs([])
     setErrorLogs([])
@@ -285,7 +374,7 @@ export default function App() {
   }
 
   const handleExportJson = () => {
-    const importantFindings = findings.filter(f => f.severity !== 'Info' && f.severity !== 'Low')
+    const importantFindings = sortedFindings.filter(f => f.severity !== 'Info' && f.severity !== 'Low')
     const payload = JSON.stringify({ infrastructure: technologies, vulnerabilities: importantFindings }, null, 2)
     const safeTarget = 'report'
     downloadBlob(`K9_${safeTarget}_findings.json`, payload, 'application/json;charset=utf-8')
@@ -293,7 +382,7 @@ export default function App() {
   }
 
   const handleExportMarkdown = () => {
-    const importantFindings = findings.filter(f => f.severity !== 'Info' && f.severity !== 'Low')
+    const importantFindings = sortedFindings.filter(f => f.severity !== 'Info' && f.severity !== 'Low')
     const md = buildMarkdownReport(targets, importantFindings, technologies)
     const safeTarget = 'report'
     downloadBlob(`K9_${safeTarget}_report.md`, md, 'text/markdown;charset=utf-8')
@@ -319,16 +408,50 @@ export default function App() {
 
   const displayLogs = errorsOnly ? errorLogs : logs;
 
+  const updateStatus = async (id, newStatus) => {
+    try {
+      await fetch(`http://localhost:8000/findings/${id}/status`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status: newStatus})
+      })
+      setFindings(prev => prev.map(f => f.id === id ? {...f, status: newStatus} : f))
+    } catch (e) {}
+  }
+
   return (
     <div className="min-h-full bg-[radial-gradient(circle_at_top,_rgba(185,28,28,0.12),_transparent_35%),linear-gradient(to_bottom,#020617,#030712_45%,#020617)] text-red-500">
-      <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-8">
+      <div className={`mx-auto flex min-h-screen w-full ${showSidebar ? 'max-w-[90rem] gap-6 flex-row' : 'max-w-6xl flex-col'} px-4 py-8 transition-all duration-300`}>
+        {showSidebar && (
+          <aside className="w-72 shrink-0 flex flex-col gap-4">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-4 shadow-2xl backdrop-blur-xl h-full flex flex-col">
+              <div className="flex items-center gap-2 text-white font-semibold mb-4 border-b border-white/10 pb-4">
+                <History className="w-5 h-5 text-red-500" /> Scan History
+              </div>
+              <div className="flex-1 overflow-y-auto pr-2 space-y-2">
+                {historyList.length === 0 ? <div className="text-sm text-slate-500">No past scans found.</div> : historyList.map(h => (
+                  <button key={h.id} onClick={() => loadScan(h.id)} className={`w-full text-left p-3 rounded-xl border transition ${currentScanId === h.id ? 'bg-red-500/20 border-red-500/50 text-white' : 'bg-black/40 border-white/5 text-slate-300 hover:bg-white/10 hover:border-white/20'}`}>
+                    <div className="font-semibold text-sm truncate">{h.targets}</div>
+                    <div className="text-xs text-slate-500 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" /> {new Date(h.timestamp).toLocaleString()}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </aside>
+        )}
+        <div className="flex-1 flex flex-col min-w-0">
         
         <header className="mb-6 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-xl flex justify-between items-center">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-red-600/30 bg-red-700/10 px-3 py-1 text-xs font-medium text-red-400">
-              <Sparkles className="h-3.5 w-3.5" /> BLACKHOUND K9 PRO <span className="text-slate-500">v3.14</span>
+          <div className="flex items-center gap-4">
+            <button onClick={() => setShowSidebar(!showSidebar)} className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 transition text-slate-300">
+              <Menu className="w-5 h-5" />
+            </button>
+            <div>
+              <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-red-600/30 bg-red-700/10 px-3 py-1 text-xs font-medium text-red-400">
+                <Sparkles className="h-3.5 w-3.5" /> BLACKHOUND K9 PRO <span className="text-slate-500">v3.14</span>
+              </div>
+              <h1 className="text-3xl font-semibold text-white">Recon Dashboard</h1>
             </div>
-            <h1 className="text-3xl font-semibold text-white">Recon Dashboard</h1>
           </div>
           <div className="flex gap-3">
             <div className="rounded-2xl border border-white/10 bg-black/40 px-5 py-3">
@@ -345,6 +468,23 @@ export default function App() {
           </button>
           {showSettings && (
             <div className="p-6 border-t border-white/10">
+              <div className="flex items-center gap-4 mb-6 pb-4 border-b border-white/5">
+                <div className="flex-1">
+                  <label className="block text-xs font-semibold text-slate-400 mb-2 uppercase">Load Config Profile</label>
+                  <select onChange={(e) => applyProfile(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white outline-none">
+                    <option value="">-- Select a Profile --</option>
+                    {profiles.map(p => (
+                      <option key={p.id} value={p.config_json}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="pt-6">
+                  <button onClick={saveNewProfile} className="px-4 py-2 bg-red-600/20 text-red-400 border border-red-600/30 rounded-xl hover:bg-red-600/30 transition text-sm font-medium flex items-center gap-2">
+                    <Save className="w-4 h-4" /> Save as New Profile
+                  </button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 <div>
                   <label className="block text-xs text-slate-400 mb-1">Noise Level</label>
@@ -373,7 +513,7 @@ export default function App() {
                 <div className="flex flex-col gap-4">
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">Burp Proxy URL</label>
-                    <input type="text" value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} placeholder="e.g. http://127.0.0.1:8080" className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-slate-600 outline-none" />
+                    <input type="text" value={proxyUrl} onChange={(e) => setProxyUrl(e.target.value)} placeholder="e.g. http://host.docker.internal:8080" className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white placeholder-slate-600 outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">Webhook URL (Slack/Discord)</label>
@@ -414,19 +554,28 @@ export default function App() {
                   <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_dalfox} onChange={e=>setToggles({...toggles, run_dalfox: e.target.checked})} /> Dalfox (XSS)</label>
                   <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_nucleidast} onChange={e=>setToggles({...toggles, run_nucleidast: e.target.checked})} /> Nuclei DAST (SQLi/Redirect)</label>
                   <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_vhost} onChange={e=>setToggles({...toggles, run_vhost: e.target.checked})} /> VHost Discovery</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_gowitness} onChange={e=>setToggles({...toggles, run_gowitness: e.target.checked})} /> Gowitness (Screenshots)</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_favicon} onChange={e=>setToggles({...toggles, run_favicon: e.target.checked})} /> Favicon Hashing</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_js_secrets} onChange={e=>setToggles({...toggles, run_js_secrets: e.target.checked})} /> JS Secret Hunting</label>
+                  <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={toggles.run_cloud_enum} onChange={e=>setToggles({...toggles, run_cloud_enum: e.target.checked})} /> Cloud Asset Discovery</label>
                 </div>
               </div>
 
               <div className="border-t border-white/10 pt-4 mt-2">
-                <h3 className="text-xs font-semibold text-red-500 mb-3 uppercase">AI Engine Settings</h3>
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="text-xs font-semibold text-red-500 uppercase">AI Engine Settings</h3>
+                  <button onClick={() => { setTemperature(0.2); setTopP(0.95); setTopK(40); setMinP(0.0); }} className="text-xs flex items-center gap-1 bg-red-900/30 text-red-400 hover:bg-red-900/50 border border-red-700/50 px-2 py-1 rounded transition">
+                    🛡️ Recommended Security AI Settings
+                  </button>
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                   <div className="md:col-span-2"><label className="block text-xs text-slate-400 mb-1">API URL</label><input type="text" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="e.g. https://openrouter.ai/api/v1" className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white outline-none" /></div>
                   <div className="md:col-span-2"><label className="block text-xs text-slate-400 mb-1">API Key</label><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white outline-none" /></div>
                   <div className="md:col-span-4"><label className="block text-xs text-slate-400 mb-1">Model Name</label><input type="text" value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="Default: OS Env Var" className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white outline-none" /></div>
-                  <div><label className="block text-xs text-slate-400 mb-1">Temp</label><input type="number" step="0.1" value={temperature} onChange={(e) => setTemperature(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-white" /></div>
-                  <div><label className="block text-xs text-slate-400 mb-1">Top K</label><input type="number" step="1" value={topK} onChange={(e) => setTopK(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-white" /></div>
-                  <div><label className="block text-xs text-slate-400 mb-1">Top P</label><input type="number" step="0.05" value={topP} onChange={(e) => setTopP(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-white" /></div>
-                  <div><label className="block text-xs text-slate-400 mb-1">Min P</label><input type="number" step="0.05" value={minP} onChange={(e) => setMinP(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-white" /></div>
+                  <div><label className="flex items-center gap-1 text-xs text-slate-400 mb-1 group relative">Temp <Info className="w-3 h-3 text-slate-500 cursor-help" /><span className="absolute bottom-full mb-1 hidden group-hover:block w-48 bg-gray-900 text-gray-200 text-[10px] p-2 rounded shadow-lg border border-white/10 z-10">Controls creativity. Keep LOW (0.1 - 0.3) for security triage to prevent hallucinations.</span></label><input type="number" step="0.1" value={temperature} onChange={(e) => setTemperature(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-white" /></div>
+                  <div><label className="flex items-center gap-1 text-xs text-slate-400 mb-1 group relative">Top K <Info className="w-3 h-3 text-slate-500 cursor-help" /><span className="absolute bottom-full mb-1 hidden group-hover:block w-48 bg-gray-900 text-gray-200 text-[10px] p-2 rounded shadow-lg border border-white/10 z-10">Limits vocabulary pool. Keep ~40 to focus the LLM on high-probability technical terms.</span></label><input type="number" step="1" value={topK} onChange={(e) => setTopK(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-white" /></div>
+                  <div><label className="flex items-center gap-1 text-xs text-slate-400 mb-1 group relative">Top P <Info className="w-3 h-3 text-slate-500 cursor-help" /><span className="absolute bottom-full mb-1 hidden group-hover:block w-48 bg-gray-900 text-gray-200 text-[10px] p-2 rounded shadow-lg border border-white/10 z-10">Dynamic vocabulary threshold. 0.95 allows slightly technical variations without degrading logic.</span></label><input type="number" step="0.05" value={topP} onChange={(e) => setTopP(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-white" /></div>
+                  <div><label className="flex items-center gap-1 text-xs text-slate-400 mb-1 group relative">Min P <Info className="w-3 h-3 text-slate-500 cursor-help" /><span className="absolute bottom-full mb-1 hidden group-hover:block w-48 bg-gray-900 text-gray-200 text-[10px] p-2 rounded shadow-lg border border-white/10 z-10">Filters out low probability tokens. 0.05 or 0.1 stops rambling.</span></label><input type="number" step="0.05" value={minP} onChange={(e) => setMinP(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-1.5 text-white" /></div>
                 </div>
               </div>
             </div>
@@ -487,9 +636,17 @@ export default function App() {
 
         <div className="flex flex-wrap items-center gap-6 border-b border-white/10 mb-6 px-4">
           <button type="button" onClick={() => setActiveTab('vulnerabilities')} className={`pb-3 text-sm font-semibold transition-colors ${activeTab === 'vulnerabilities' ? 'text-red-500 border-b-2 border-red-500' : 'text-slate-400 hover:text-slate-200'}`}>Vulnerabilities</button>
+          <button type="button" onClick={() => setActiveTab('map')} className={`pb-3 flex items-center gap-1 text-sm font-semibold transition-colors ${activeTab === 'map' ? 'text-green-400 border-b-2 border-green-400' : 'text-slate-400 hover:text-slate-200'}`}><Globe className="w-4 h-4" />Attack Surface Map</button>
           <button type="button" onClick={() => setActiveTab('infrastructure')} className={`pb-3 text-sm font-semibold transition-colors ${activeTab === 'infrastructure' ? 'text-cyan-400 border-b-2 border-cyan-400' : 'text-slate-400 hover:text-slate-200'}`}>Infrastructure Profile</button>
           <button type="button" onClick={() => setActiveTab('analysis')} className={`pb-3 text-sm font-semibold transition-colors ${activeTab === 'analysis' ? 'text-purple-400 border-b-2 border-purple-400' : 'text-slate-400 hover:text-slate-200'}`}>Executive AI Assessment</button>
+          <button type="button" onClick={() => setActiveTab('gallery')} className={`pb-3 text-sm font-semibold transition-colors ${activeTab === 'gallery' ? 'text-red-500 border-b-2 border-red-500' : 'text-slate-400 hover:text-slate-200'}`}>Screenshot Gallery</button>
         </div>
+
+        {activeTab === 'map' && (
+          <div className="mb-6">
+            <AttackSurfaceMap data={attackSurfaceTree} selectedNodeId={selectedTreeNodeId} />
+          </div>
+        )}
 
         {activeTab === 'infrastructure' && (
           <div className="mb-6 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-xl overflow-hidden">
@@ -515,6 +672,36 @@ export default function App() {
           </div>
         )}
 
+        {activeTab === 'gallery' && (
+          <div className="mb-6 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-xl overflow-hidden">
+            <div className="mb-4 flex items-center gap-3">
+              <Camera className="h-5 w-5 text-red-500" />
+              <h2 className="text-lg font-semibold text-white">Screenshot Gallery</h2>
+            </div>
+            {screenshots.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {screenshots.map((img, i) => {
+                  const rawUrl = img.replace(/\.png$/, '').replace(/^http-/, 'http://').replace(/^https-/, 'https://')
+                  return (
+                    <div key={i} className="rounded-xl border border-red-500/30 bg-black/40 overflow-hidden hover:border-red-500/80 transition shadow-lg">
+                      <img src={`http://localhost:8000/screenshots/${img}`} alt={rawUrl} className="w-full object-cover" />
+                      <div className="p-3 bg-white/5 border-t border-white/10 text-center">
+                        <a href={rawUrl} target="_blank" rel="noreferrer" className="text-xs font-mono text-white hover:text-red-400 transition break-all">
+                          {rawUrl}
+                        </a>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-16 text-slate-500">
+                No screenshots available. Run a scan with Gowitness enabled.
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'vulnerabilities' && (
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-xl overflow-hidden">
             <div className="mb-6 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
@@ -531,6 +718,12 @@ export default function App() {
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Search findings..." className="bg-black/40 border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-sm text-white outline-none w-48 focus:border-red-600/50" />
+                  </div>
+                  <div className="flex items-center gap-2 bg-black/40 rounded-xl px-3 py-1.5 border border-white/10">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-300">
+                      <input type="checkbox" checked={hideFalsePositives} onChange={(e) => setHideFalsePositives(e.target.checked)} className="form-checkbox text-red-500 rounded border-white/20 bg-black/50" />
+                      Hide FP
+                    </label>
                   </div>
                   <div className="flex items-center gap-2 bg-black/40 rounded-xl px-3 py-1.5 border border-white/10">
                     <Filter className="w-4 h-4 text-slate-400" />
@@ -564,17 +757,58 @@ export default function App() {
                 <table className="w-full text-left">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/5 text-xs uppercase text-slate-400">
-                      <th className="px-6 py-4">Type</th><th className="px-6 py-4">Value</th><th className="px-6 py-4">Severity</th>
+                      <th className="px-6 py-4">Type</th><th className="px-6 py-4">Value</th><th className="px-6 py-4">Severity</th><th className="px-6 py-4">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {paginatedFindings.map((f, i) => (
-                      <tr key={i} className="hover:bg-white/5 transition-colors">
-                        <td className="px-6 py-4 text-sm font-medium text-white">{f.type}</td>
-                        <td className="px-6 py-4 text-sm font-mono break-all"><RenderValue value={f.value} /></td>
+                    {paginatedFindings.map((f, i) => {
+                      return (
+                      <tr key={f.id || i} className={`hover:bg-white/5 transition-colors ${f.isChild ? 'bg-black/20' : ''}`}>
+                        <td className={`px-6 py-4 text-sm font-medium text-white ${f.isChild ? 'pl-12 border-l-2 border-l-slate-700/50' : ''}`}>
+                          <div className="flex items-center gap-2">
+                            {f.type}
+                            {f.fp_reason && (
+                              <div className="relative group cursor-help">
+                                <Info className="w-4 h-4 text-slate-400 hover:text-cyan-400 transition" />
+                                <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 w-48 p-2 bg-slate-800 text-xs text-slate-200 rounded border border-white/10 opacity-0 group-hover:opacity-100 transition pointer-events-none z-10 shadow-xl whitespace-normal break-words">
+                                  {f.fp_reason}
+                                </div>
+                              </div>
+                            )}
+                            {f.is_new && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-600/20 text-red-400 border border-red-500/30 shadow-[0_0_8px_rgba(220,38,38,0.4)] animate-pulse">NEW</span>}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm font-mono break-all">
+                          <div className="flex items-center justify-between gap-2">
+                            <RenderValue value={f.value} />
+                            {f.value && (
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveTab('map');
+                                  setSelectedTreeNodeId(f.value.startsWith('http') ? f.value : `http://${f.value}`);
+                                }}
+                                className="shrink-0 px-2 py-1 rounded bg-black/40 border border-white/10 hover:bg-white/10 hover:text-white text-slate-400 text-[10px] uppercase font-bold flex items-center gap-1 transition"
+                                title="View in Attack Surface Map"
+                              >
+                                🗺️ Map
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-6 py-4"><SeverityBadge severity={f.severity} /></td>
+                        <td className="px-6 py-4 text-sm">
+                          <select value={f.status || 'Investigating'} onChange={(e) => updateStatus(f.id, e.target.value)} onClick={(e) => e.stopPropagation()} className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-slate-300 focus:outline-none focus:border-red-500/50">
+                            <option value="Investigating">Investigating</option>
+                            <option value="Confirmed">Confirmed</option>
+                            <option value="Reported">Reported</option>
+                            <option value="Duplicate">Duplicate</option>
+                            <option value="False Positive">False Positive</option>
+                            <option value="N/A">N/A</option>
+                          </select>
+                        </td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               )}
@@ -624,6 +858,7 @@ export default function App() {
             </div>
           </div>
         )}
+        </div>
       </div>
     </div>
   )
