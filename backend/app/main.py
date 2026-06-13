@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from app.services.recon import run_pipeline
+from app.services.recon import run_pipeline, is_in_scope
 from app.core.executor import ws_manager, cancel_active_scan
 
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +43,7 @@ class ScanRequest(BaseModel):
     min_p: float = 0.0
     wordlist: list = ["quick", "backups", "admin_panels"]
     custom_headers: list[str] = []  # NEW: Multiple Custom Headers
+    out_of_scope: list[str] = []
     proxy_url: str = ""
     webhook_url: str = ""
     rate_limit: int = 150
@@ -59,10 +60,10 @@ async def websocket_logs(websocket: WebSocket):
     except Exception:
         ws_manager.disconnect(websocket)
 
-async def _pipeline_wrapper(targets, threads, depth, api_url, api_key, model, temp, tk, tp, mp, wl, custom_headers, rate_limit, togs, proxy_url, webhook_url):
+async def _pipeline_wrapper(targets, threads, depth, api_url, api_key, model, temp, tk, tp, mp, wl, custom_headers, rate_limit, togs, proxy_url, webhook_url, out_of_scope):
     global SCAN_IN_PROGRESS
     try:
-        await run_pipeline(targets, threads, depth, api_url, api_key, model, temp, tk, tp, mp, wl, custom_headers, rate_limit, togs, proxy_url, webhook_url)
+        await run_pipeline(targets, threads, depth, api_url, api_key, model, temp, tk, tp, mp, wl, custom_headers, rate_limit, togs, proxy_url, webhook_url, out_of_scope)
     except asyncio.CancelledError:
         await ws_manager.broadcast("\n[!] Pipeline script terminated successfully.")
     except Exception as e:
@@ -82,10 +83,11 @@ async def start_scan(req: ScanRequest):
     for t in req.targets:
         t = t.lower().strip().replace("http://", "").replace("https://", "").rstrip("/")
         if re.match(r"^[a-zA-Z0-9.-]+(:\d+)?$", t):
-            clean_targets.append(t)
+            if is_in_scope(t, req.out_of_scope):
+                clean_targets.append(t)
 
     if not clean_targets:
-        raise HTTPException(status_code=400, detail="No valid targets provided.")
+        raise HTTPException(status_code=400, detail="No valid targets provided or all targets were out of scope.")
 
     async with scan_lock:
         if SCAN_IN_PROGRESS:
@@ -102,7 +104,7 @@ async def start_scan(req: ScanRequest):
 
     current_scan_task = asyncio.create_task(_pipeline_wrapper(
         clean_targets, req.threads, req.scan_depth, req.api_url, req.api_key, req.model_name,
-        req.temperature, req.top_k, req.top_p, req.min_p, req.wordlist, req.custom_headers, req.rate_limit, req.toggles, req.proxy_url, req.webhook_url
+        req.temperature, req.top_k, req.top_p, req.min_p, req.wordlist, req.custom_headers, req.rate_limit, req.toggles, req.proxy_url, req.webhook_url, req.out_of_scope
     ))
     return {"status": "queued"}
 

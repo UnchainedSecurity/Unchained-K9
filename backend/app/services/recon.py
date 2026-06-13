@@ -18,6 +18,23 @@ PARAM_WORDLIST = WORKSPACE_DIR / "param_wordlist.txt"
 VHOST_WORDLIST_URL = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/DNS/subdomains-top1million-5000.txt"
 VHOST_WORDLIST = WORKSPACE_DIR / "vhost_wordlist.txt"
 
+def is_in_scope(domain: str, exclusions: list) -> bool:
+    if not exclusions:
+        return True
+    domain = domain.lower().strip().rstrip('.')
+    for exclusion in exclusions:
+        exclusion = exclusion.lower().strip().rstrip('.')
+        if not exclusion:
+            continue
+        if exclusion.startswith('*.'):
+            base_domain = exclusion[2:]
+            if domain == base_domain or domain.endswith(f'.{base_domain}'):
+                return False
+        else:
+            if domain == exclusion:
+                return False
+    return True
+
 def _compile_wordlists(categories: list):
     """Download all selected wordlist categories, merge and deduplicate."""
     all_lines = set()
@@ -69,7 +86,7 @@ def _extract_harvester_hosts(filepath: Path) -> set:
 import urllib.parse
 import re
 
-def _extract_params():
+def _extract_params(out_of_scope: list = None):
     params = []
     seen_sigs = set()
     
@@ -77,6 +94,7 @@ def _extract_params():
         if "?" not in url or "=" not in url: return
         try:
             parsed = urllib.parse.urlparse(url)
+            if not is_in_scope(parsed.hostname, out_of_scope): return
             raw_keys = urllib.parse.parse_qs(parsed.query).keys()
             
             clean_keys = []
@@ -200,7 +218,7 @@ async def _fetch_and_hash_favicon(target_url: str, custom_headers: list, proxy_u
     return None
 
 # SAFE HARBOR PIPELINE UPDATE
-async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_name, temp, top_k, top_p, min_p, wordlist_categories, custom_headers, rate_limit, toggles, proxy_url, webhook_url):
+async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_name, temp, top_k, top_p, min_p, wordlist_categories, custom_headers, rate_limit, toggles, proxy_url, webhook_url, out_of_scope):
     import urllib.parse
     clean_targets = []
     for t in targets:
@@ -211,9 +229,13 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
             hostname = parsed.hostname or parsed.netloc.split(":")[0]
         else:
             hostname = t.split(":")[0].split("/")[0]
-        if hostname:
+        if hostname and is_in_scope(hostname, out_of_scope):
             clean_targets.append(hostname)
     targets = list(set(clean_targets))
+    
+    if not targets:
+        await ws_manager.broadcast("[!] Pipeline aborted: All targets are out of scope.")
+        return
 
     await ws_manager.broadcast(f"[*] Initializing Unchained K9 (Pro) Pipeline against {len(targets)} targets")
     safe_threads = str(min(int(threads), rate_limit))
@@ -249,6 +271,8 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
         all_subs.update(line.strip().lower() for line in (WORKSPACE_DIR / "subdomains.txt").read_text().splitlines() if line.strip())
     for t in targets:
         all_subs.update(_extract_harvester_hosts(WORKSPACE_DIR / f"harvester_{t}.json"))
+    
+    all_subs = {s for s in all_subs if is_in_scope(s, out_of_scope)}
     
     all_subs_file = WORKSPACE_DIR / "all_subs.txt"
     all_subs_file.write_text("\n".join(sorted(all_subs)))
@@ -391,7 +415,9 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
             if not u.startswith("http"): return False
             if "%" in u or "[" in u or "{" in u or "<" in u or ">" in u: return False
             try:
-                path = urllib.parse.urlparse(u).path.lower()
+                parsed = urllib.parse.urlparse(u)
+                if not is_in_scope(parsed.hostname, out_of_scope): return False
+                path = parsed.path.lower()
                 if path.endswith(junk_exts): return False
             except:
                 return False
@@ -425,7 +451,7 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
             x8_cmd = ["/usr/local/bin/x8", "-u", str(x8_targets_file), "-w", str(PARAM_WORDLIST), "-O", "json", "-o", str(WORKSPACE_DIR / "x8.json"), "-W", safe_threads]
             await run_tool(x8_cmd, "x8.log", timeout=3600, proxy_url=proxy_url)
 
-    unique_param_count = await asyncio.to_thread(_extract_params)
+    unique_param_count = await asyncio.to_thread(_extract_params, out_of_scope)
     await ws_manager.broadcast("[PROGRESS] 4/6: Active DAST Fuzzing")
     await ws_manager.broadcast(f"[*] DAST Deduplication: Reduced raw URLs down to {unique_param_count} unique parameter signatures.")
     params_file = WORKSPACE_DIR / "params.txt"

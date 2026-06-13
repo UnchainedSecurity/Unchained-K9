@@ -84,6 +84,7 @@ export default function App() {
   const [selectedTreeNodeId, setSelectedTreeNodeId] = useState(null)
 
   const [targets, setTargets] = useState('')
+  const [outOfScope, setOutOfScope] = useState('')
   const [findings, setFindings] = useState([])
   const [technologies, setTechnologies] = useState([])
   const [aiAnalysis, setAiAnalysis] = useState('')
@@ -163,6 +164,7 @@ export default function App() {
       if (conf.topP !== undefined) setTopP(conf.topP)
       if (conf.minP !== undefined) setMinP(conf.minP)
       if (conf.webhookUrl !== undefined) setWebhookUrl(conf.webhookUrl)
+      if (conf.outOfScope !== undefined) setOutOfScope(conf.outOfScope)
     } catch(e) {}
   }
 
@@ -171,7 +173,7 @@ export default function App() {
     if (!name) return
     const config_json = JSON.stringify({
       customThreads, rateLimit, toggles, wordlistCategories, recursionDepth,
-      apiUrl, apiKey, modelName, temperature, topK, topP, minP, webhookUrl
+      apiUrl, apiKey, modelName, temperature, topK, topP, minP, webhookUrl, outOfScope
     })
     try {
       await fetch('http://localhost:8000/profiles', {
@@ -323,6 +325,15 @@ export default function App() {
   const startRecon = async (e) => {
     e.preventDefault()
     if (!targets.trim()) return
+
+    const oosLines = outOfScope.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+    for (const line of oosLines) {
+      if (line.includes('*') && !line.includes('*.')) {
+        alert(`Invalid wildcard in out of scope list: '${line}'. A wildcard '*' must be followed by a dot (e.g., '*.example.com').`)
+        return
+      }
+    }
+
     setStatus('scanning')
     setErrorMsg('')
     setFindings([])
@@ -347,6 +358,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           targets: targetsList, threads: finalThreads, scan_depth: scanDepth, 
+          out_of_scope: oosLines,
           custom_headers: headersList, proxy_url: proxyUrl.trim(), webhook_url: webhookUrl.trim(),
           rate_limit: parseInt(rateLimit),
           api_url: apiUrl, api_key: apiKey, model_name: modelName,
@@ -583,9 +595,15 @@ export default function App() {
         </section>
 
         <form onSubmit={startRecon} className="mb-6 flex flex-col md:flex-row gap-4 rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-xl">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-4 w-5 h-5 text-slate-500" />
-            <textarea value={targets} onChange={(e) => setTargets(e.target.value)} placeholder="Enter target domains (one per line)" rows="3" className="w-full rounded-2xl border border-white/10 bg-slate-950/80 pl-12 pr-4 py-4 text-white outline-none focus:border-red-600/50 resize-none" disabled={status === 'scanning'}></textarea>
+          <div className="relative flex-1 flex flex-col gap-4">
+            <div className="relative">
+              <Search className="absolute left-4 top-4 w-5 h-5 text-slate-500" />
+              <textarea value={targets} onChange={(e) => setTargets(e.target.value)} placeholder="Enter target domains (one per line)" rows="3" className="w-full rounded-2xl border border-white/10 bg-slate-950/80 pl-12 pr-4 py-4 text-white outline-none focus:border-red-600/50 resize-none" disabled={status === 'scanning'}></textarea>
+            </div>
+            <div className="relative">
+              <ShieldAlert className="absolute left-4 top-4 w-5 h-5 text-slate-500" />
+              <textarea value={outOfScope} onChange={(e) => setOutOfScope(e.target.value)} placeholder="Out of Scope Exclusions (one per line, e.g. *.email.shopify.com)" rows="3" className="w-full rounded-2xl border border-white/10 bg-slate-950/80 pl-12 pr-4 py-4 text-white outline-none focus:border-red-600/50 resize-none" disabled={status === 'scanning'}></textarea>
+            </div>
           </div>
           <div className="flex gap-2">
             <button type="submit" disabled={status === 'scanning' || !targets.trim()} className="flex h-full items-center justify-center gap-2 rounded-2xl bg-red-700 px-6 py-4 font-semibold text-slate-950 hover:bg-red-600 disabled:opacity-50 transition">
