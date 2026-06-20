@@ -118,6 +118,7 @@ export default function App() {
   const [wordlistCategories, setWordlistCategories] = useState(['quick', 'backups', 'admin_panels'])
   const [screenshots, setScreenshots] = useState([])
   const [recursionDepth, setRecursionDepth] = useState(0)
+  const [katanaDepth, setKatanaDepth] = useState(3)
   const [toggles, setToggles] = useState({ run_harvester: true, run_gau: true, run_katana: true, run_nuclei: true, run_dalfox: false, run_nucleidast: false, run_vhost: false, run_gowitness: true, run_favicon: true, run_js_secrets: false, run_cloud_enum: false })
   
   const [logs, setLogs] = useState([])
@@ -172,7 +173,7 @@ export default function App() {
     const name = prompt("Enter a name for this profile:")
     if (!name) return
     const config_json = JSON.stringify({
-      customThreads, rateLimit, toggles, wordlistCategories, recursionDepth,
+      customThreads, rateLimit, toggles, wordlistCategories, recursionDepth, katanaDepth,
       apiUrl, apiKey, modelName, temperature, topK, topP, minP, webhookUrl, outOfScope
     })
     try {
@@ -364,7 +365,7 @@ export default function App() {
           api_url: apiUrl, api_key: apiKey, model_name: modelName,
           temperature: parseFloat(temperature), top_k: parseInt(topK), top_p: parseFloat(topP), min_p: parseFloat(minP),
           wordlist: wordlistCategories,
-          toggles: { ...toggles, recursion_depth: recursionDepth }
+          toggles: { ...toggles, recursion_depth: recursionDepth, katana_depth: katanaDepth }
         })
       })
       if (!res.ok) {
@@ -552,6 +553,13 @@ export default function App() {
                   <input type="number" min="0" value={recursionDepth} onChange={(e) => setRecursionDepth(parseInt(e.target.value) || 0)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white outline-none" />
                   {recursionDepth > 0 && (
                     <p className="mt-1.5 text-xs text-yellow-400">⚠ Warning: Recursion multiplies requests exponentially and will drastically increase scan time.</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Katana Depth</label>
+                  <input type="number" min="1" value={katanaDepth} onChange={(e) => setKatanaDepth(parseInt(e.target.value) || 3)} className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-white outline-none" />
+                  {katanaDepth >= 5 && (
+                    <p className="mt-1.5 text-xs text-yellow-400">⚠ Warning: High crawling depth will capture massive amounts of data and bandwidth.</p>
                   )}
                 </div>
               </div>

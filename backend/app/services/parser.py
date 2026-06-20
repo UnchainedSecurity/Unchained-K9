@@ -74,9 +74,11 @@ def parse_whatweb() -> List[TechFinding]:
     return list({(t.technology, t.location): t for t in techs}.values())
 
 def parse_katana() -> List[Finding]:
-    data = _safe_read_json(WORKSPACE_DIR / "katana.json")
-    if isinstance(data, dict): data = [data]
-    findings = [Finding(type="Endpoint", value=o.get("request",{}).get("endpoint") or o.get("endpoint") or "", severity="Info") for o in data if o.get("request",{}).get("endpoint") or o.get("endpoint")]
+    if not (WORKSPACE_DIR / "katana.txt").exists(): return []
+    findings = []
+    for line in (WORKSPACE_DIR / "katana.txt").read_text(errors="ignore").splitlines():
+        ep = line.strip()
+        if ep: findings.append(Finding(type="Endpoint", value=ep, severity="Info"))
     return list({(f.type, f.value): f for f in findings}.values())
 
 def parse_wafw00f() -> List[TechFinding]:
@@ -152,22 +154,35 @@ def parse_nuclei() -> tuple[List[Finding], List[TechFinding]]:
     return findings, unique_techs
 
 def extract_json(text: str) -> list:
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    
     try: 
         res = json.loads(text)
         return res if res is not None else []
     except: pass
+    
     match = re.search(r'```(?:json)?\s*(\[.*?\]|\{.*?\})\s*```', text, re.DOTALL)
     if match:
         try: 
             res = json.loads(match.group(1))
             return res if res is not None else []
         except: pass
-    start, end = text.find('['), text.rfind(']')
-    if start != -1 and end != -1:
-        try: 
-            res = json.loads(text[start:end+1])
+        
+    start_brace, end_brace = text.find('{'), text.rfind('}')
+    start_bracket, end_bracket = text.find('['), text.rfind(']')
+    
+    if start_brace != -1 and end_brace != -1 and start_brace < end_brace:
+        try:
+            res = json.loads(text[start_brace:end_brace+1])
             return res if res is not None else []
         except: pass
+        
+    if start_bracket != -1 and end_bracket != -1 and start_bracket < end_bracket:
+        try:
+            res = json.loads(text[start_bracket:end_bracket+1])
+            return res if res is not None else []
+        except: pass
+        
     return []
 
 async def generate_ai_assessment(findings: List[Finding], tech_findings: List[TechFinding], api_url, api_key, model_name, temp, top_k, top_p, min_p) -> str:
@@ -189,7 +204,7 @@ async def generate_ai_assessment(findings: List[Finding], tech_findings: List[Te
     payload = [{"type": f.type, "value": f.value, "severity": f.severity} for f in filtered[:200]]
     tech_payload = [{"technology": t.technology, "location": t.location} for t in tech_findings[:50]]
     
-    prompt = f"""You are a Red Team Lead. Based on these recon findings and the infrastructure profile, write a 2-3 paragraph Executive Summary of the attack surface, a summary of the infrastructure profile based on your interpretation of the findings, followed by 2-3 bullet points of potential attack vectors or exploit chains the tester should try next. Use Markdown formatting.
+    prompt = f"""Based on these recon findings and the infrastructure profile, write a 2-3 paragraph Executive Summary of the attack surface, a summary of the infrastructure profile based on your interpretation of the findings, followed by 2-3 bullet points of potential attack vectors or exploit chains the tester should try next. Use Markdown formatting.
 
 Findings:
 {json.dumps(payload)}
@@ -199,9 +214,13 @@ Infrastructure:
 
     try:
         response = await client.chat.completions.create(
-            model=resolved_model, messages=[{"role": "user", "content": prompt}],
+            model=resolved_model, 
+            messages=[
+                {"role": "system", "content": "You are a Red Team Lead. You must provide your analysis in Markdown formatting."},
+                {"role": "user", "content": prompt}
+            ],
             temperature=temp, top_p=top_p, extra_body={"top_k": top_k, "min_p": min_p},
-            timeout=120.0, stream=True
+            timeout=900.0, stream=True
         )
         full_text = ""
         async for chunk in response:
@@ -236,7 +255,7 @@ async def analyze_findings_with_ai(findings: List[Finding], api_url, api_key, mo
             if any(p in v for p in ["/images", "/css", "/assets", "/fonts", "/js"]): return True
         return False
 
-    items_to_process = [f for f in unique_findings if not is_junk(f)][:750]
+    items_to_process = [f for f in unique_findings if not is_junk(f)][:1500]
     
     if len(items_to_process) < len(unique_findings):
         await ws_manager.broadcast(f"[*] Junk Filter: Ignored {len(unique_findings) - len(items_to_process)} standard findings to save AI tokens.")
@@ -246,17 +265,18 @@ async def analyze_findings_with_ai(findings: List[Finding], api_url, api_key, mo
     from app.services.recon import WORKSPACE_DIR
     import json
     
-    for i in range(0, len(items_to_process), 50):
-        batch = items_to_process[i:i + 50]
+    for i in range(0, len(items_to_process), 25):
+        batch = items_to_process[i:i + 25]
         payload = [{"type": f.type, "value": f.value, "severity": f.severity} for f in batch]
         
-        prompt = f"""You are a Lead Bug Bounty Triage Analyst. Evaluate these raw recon findings.
-Nuclei findings already have accurate severities—do NOT change them. 
-For all other findings, you MUST apply Context-Aware Heuristics:
+        prompt = f"""Evaluate these raw recon findings.
+For Nuclei findings, only modify their severity if the original severity is 'Unknown' or 'Info' (e.g., triage generic token or dependency warnings based on context). 
+For all findings, you MUST apply Context-Aware Heuristics:
 1. Subdomain Context: A finding on 'dev.', 'staging.', or 'admin.' is higher severity than 'www.'.
 2. Port Context: Port 80/443 is Info. Exposed databases (3306, 5432), management ports (22, 2082), or weird high ports should be Medium/High.
-3. File/Directory Context: Generic paths (images, css) are Info. Sensitive files (.git, .env, .ssh) are High/Critical ONLY IF they are accessible (e.g., [HTTP 200]). If the Type indicates [HTTP 401], [HTTP 403], or [HTTP 404], the server is blocking access, so you MUST downgrade it to Low or Info.
-4. Katana/WhatWeb Context: General framework fingerprints are Info. 
+3. File/Directory/Path Context: Generic paths (images, css, standard chunks) are Info. Sensitive files or directories (like '.env', '.git', '/ftp', '/metrics', '/backup', '/admin') that are accessible (e.g., [HTTP 200]) should be Medium/High/Critical. If the Type indicates [HTTP 401], [HTTP 403], or [HTTP 404], the server is blocking access, so you MUST downgrade it to Low or Info.
+4. Endpoint/API Context: Exposed API or administrative endpoints (like '/rest/admin/...', '/api/v1/users', '/wallet-web3', '/faucet') should be Medium/High. General frontend bundles or static assets are Info.
+5. Token/Exposure Context: Generic token exposures found in JS or public endpoints should be triaged. If the value or context shows a potentially high-value key, private token, or mnemonic, elevate it to Medium or High. If it looks like a false positive or public token (like recaptcha), keep it as Info/Low.
 
 CRITICAL INSTRUCTIONS:
 - Return ONLY a valid JSON object.
@@ -270,12 +290,15 @@ Findings:
 {json.dumps(payload)}"""
 
         try:
-            await ws_manager.broadcast(f"[*] Processing AI Batch {i//50 + 1} ({len(batch)} findings)...")
+            await ws_manager.broadcast(f"[*] Processing AI Batch {i//25 + 1} ({len(batch)} findings)...")
             response = await client.chat.completions.create(
-                model=resolved_model, messages=[{"role": "user", "content": prompt}],
+                model=resolved_model, 
+                messages=[
+                    {"role": "system", "content": "You are a Lead Bug Bounty Triage Analyst. You must output your results in strictly valid JSON format."},
+                    {"role": "user", "content": prompt}
+                ],
                 temperature=temp, top_p=top_p, extra_body={"top_k": top_k, "min_p": min_p},
-                response_format={"type": "json_object"},
-                timeout=120.0
+                timeout=900.0
             )
             
             if not response or not hasattr(response, 'choices') or not response.choices:
@@ -290,7 +313,8 @@ Findings:
             for f in batch:
                 mapped = severity_map.get((f.type, f.value))
                 if mapped in ["Info", "Low", "Medium", "High", "Critical"]:
-                    if not f.type.startswith("Nuclei:"): f.severity = mapped
+                    if not f.type.startswith("Nuclei:") or f.severity in ["Unknown", "Info"]:
+                        f.severity = mapped
             
             # Send batch update
             await ws_manager.broadcast("[HUNT:BATCH_COMPLETED]")

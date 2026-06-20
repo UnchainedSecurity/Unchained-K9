@@ -10,20 +10,12 @@ def build_attack_surface_tree(findings: list, targets: list = None) -> str:
     raw_urls = set()
     
     # 1. Ingest Katana
-    katana_file = WORKSPACE_DIR / "katana.json"
+    katana_file = WORKSPACE_DIR / "katana.txt"
     if katana_file.exists():
         for line in katana_file.read_text(errors="ignore").splitlines():
             line = line.strip()
-            if not line: continue
             if line.startswith("http"):
                 raw_urls.add(line)
-                continue
-            try:
-                o = json.loads(line)
-                ep = o.get("request", {}).get("endpoint") or o.get("endpoint")
-                if ep: raw_urls.add(ep)
-            except:
-                pass
                 
     # 2. Ingest GAU
     gau_file = WORKSPACE_DIR / "gau.txt"

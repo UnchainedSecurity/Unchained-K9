@@ -21,9 +21,16 @@ VHOST_WORDLIST = WORKSPACE_DIR / "vhost_wordlist.txt"
 def is_in_scope(domain: str, exclusions: list) -> bool:
     if not exclusions:
         return True
+    
+    # Strip protocols and paths from the domain being checked
     domain = domain.lower().strip().rstrip('.')
+    domain = domain.replace("http://", "").replace("https://", "").split("/")[0]
+
     for exclusion in exclusions:
+        # Clean up HackerOne/Bugcrowd style pasted scopes
         exclusion = exclusion.lower().strip().rstrip('.')
+        exclusion = exclusion.replace("http://", "").replace("https://", "").split("/")[0]
+        
         if not exclusion:
             continue
         if exclusion.startswith('*.'):
@@ -123,15 +130,10 @@ def _extract_params(out_of_scope: list = None):
     except Exception: pass
     
     try:
-        if (WORKSPACE_DIR / "katana.json").exists():
-            for line in (WORKSPACE_DIR / "katana.json").read_text(errors="ignore").splitlines():
-                line = line.strip()
-                if not line: continue
-                try:
-                    o = json.loads(line)
-                    endpoint = o.get("request", {}).get("endpoint") or o.get("endpoint")
-                    if endpoint: process_url(endpoint)
-                except Exception: pass
+        if (WORKSPACE_DIR / "katana.txt").exists():
+            for line in (WORKSPACE_DIR / "katana.txt").read_text(errors="ignore").splitlines():
+                ep = line.strip()
+                if ep: process_url(ep)
     except Exception: pass
 
     try:
@@ -221,16 +223,28 @@ async def _fetch_and_hash_favicon(target_url: str, custom_headers: list, proxy_u
 async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_name, temp, top_k, top_p, min_p, wordlist_categories, custom_headers, rate_limit, toggles, proxy_url, webhook_url, out_of_scope):
     import urllib.parse
     clean_targets = []
+    explicit_ports = set()
     for t in targets:
         t = t.strip()
         if not t: continue
+        port = None
         if "://" in t:
             parsed = urllib.parse.urlparse(t)
             hostname = parsed.hostname or parsed.netloc.split(":")[0]
+            if parsed.port:
+                port = str(parsed.port)
         else:
-            hostname = t.split(":")[0].split("/")[0]
+            parts = t.split("/")
+            host_port = parts[0]
+            if ":" in host_port:
+                hostname, port = host_port.split(":", 1)
+            else:
+                hostname = host_port
+                
         if hostname and is_in_scope(hostname, out_of_scope):
             clean_targets.append(hostname)
+            if port:
+                explicit_ports.add(port)
     targets = list(set(clean_targets))
     
     if not targets:
@@ -260,11 +274,11 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
     targets_file.write_text("\n".join(targets))
 
     await ws_manager.broadcast("[PROGRESS] 1/6: OSINT & Subdomain Discovery")
-    await run_tool(["/usr/local/bin/subfinder", "-dL", str(targets_file), "-all", "-silent", "-t", safe_threads, "-rl", str(rate_limit)], "subdomains.txt", timeout=300, proxy_url=proxy_url)
+    await run_tool(["/usr/local/bin/subfinder", "-dL", str(targets_file), "-all", "-silent", "-t", safe_threads, "-rl", str(rate_limit)], "subdomains.txt", timeout=600, proxy_url=proxy_url)
     
     if toggles.get("run_harvester", True):
         for t in targets:
-            await run_tool(["theHarvester", "-d", t, "-b", "crtsh,hackertarget", "-f", str(WORKSPACE_DIR / f"harvester_{t}")], f"harvester_{t}.log", timeout=300, retries=1, proxy_url=proxy_url)
+            await run_tool(["theHarvester", "-d", t, "-b", "crtsh,hackertarget", "-f", str(WORKSPACE_DIR / f"harvester_{t}")], f"harvester_{t}.log", timeout=600, retries=1, proxy_url=proxy_url)
 
     all_subs = set(targets)
     if (WORKSPACE_DIR / "subdomains.txt").exists():
@@ -277,7 +291,7 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
     all_subs_file = WORKSPACE_DIR / "all_subs.txt"
     all_subs_file.write_text("\n".join(sorted(all_subs)))
 
-    await run_tool(["/usr/local/bin/dnsx", "-l", str(all_subs_file), "-silent", "-hf", "-o", str(WORKSPACE_DIR / "dns_valid.txt"), "-rl", str(rate_limit)], "dns.log", timeout=300, proxy_url=proxy_url)
+    await run_tool(["/usr/local/bin/dnsx", "-l", str(all_subs_file), "-silent", "-hf", "-o", str(WORKSPACE_DIR / "dns_valid.txt"), "-rl", str(rate_limit)], "dns.log", timeout=600, proxy_url=proxy_url)
 
     if toggles.get("run_cloud_enum", False):
         await ws_manager.broadcast("[*] Running Cloud Asset Discovery...")
@@ -292,10 +306,18 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
         
         cloud_cmd = ["/usr/local/bin/nuclei", "-l", str(cloud_targets_file), "-tags", "cloud,s3,bucket,azure,gcp", "-j", "-o", str(WORKSPACE_DIR / "nuclei_cloud.json"), "-c", safe_threads, "-rl", str(rate_limit)]
         cloud_cmd.extend(h_flag)
-        await run_tool(cloud_cmd, "nuclei_cloud.log", timeout=1800, proxy_url=proxy_url)
+        await run_tool(cloud_cmd, "nuclei_cloud.log", timeout=1800, cold_start_timeout=3600, proxy_url=proxy_url)
 
     await ws_manager.broadcast("[PROGRESS] 2/6: Port Scanning & HTTP Probing")
-    await run_tool(["/usr/local/bin/naabu", "-list", str(WORKSPACE_DIR / "dns_valid.txt"), "-silent", "-top-ports", "1000", "-p", "3000", "-c", safe_threads, "-rate", str(rate_limit), "-o", str(WORKSPACE_DIR / "ports.txt")], "naabu.log", timeout=600, proxy_url=proxy_url)
+    
+    naabu_cmd = ["/usr/local/bin/naabu", "-list", str(WORKSPACE_DIR / "dns_valid.txt"), "-silent", "-c", safe_threads, "-rate", str(rate_limit), "-o", str(WORKSPACE_DIR / "ports.txt")]
+    if explicit_ports:
+        naabu_cmd.extend(["-p", ",".join(explicit_ports)])
+        await ws_manager.broadcast(f"[*] Explicit ports detected in targets. Restricting naabu port scan to: {','.join(explicit_ports)}")
+    else:
+        naabu_cmd.extend(["-top-ports", "1000", "-p", "3000"])
+
+    await run_tool(naabu_cmd, "naabu.log", timeout=1800, proxy_url=proxy_url)
     
     ports_file = WORKSPACE_DIR / "ports.txt"
     if not ports_file.exists() or ports_file.stat().st_size == 0:
@@ -305,7 +327,7 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
             shutil.copy(WORKSPACE_DIR / "dns_valid.txt", ports_file)
 
     # Inject Header into httpx
-    await run_tool(["/usr/local/bin/httpx", "-l", str(ports_file), "-silent", "-threads", safe_threads, "-rl", str(rate_limit)] + h_flag, "alive.txt", timeout=300, proxy_url=proxy_url)
+    await run_tool(["/usr/local/bin/httpx", "-l", str(ports_file), "-silent", "-threads", safe_threads, "-rl", str(rate_limit)] + h_flag, "alive.txt", timeout=600, proxy_url=proxy_url)
     alive_file = WORKSPACE_DIR / "alive.txt"
 
     if alive_file.exists() and alive_file.stat().st_size > 0:
@@ -339,19 +361,17 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
     if toggles.get("run_gau", True):
         await run_tool(["/usr/local/bin/gau", "--o", str(WORKSPACE_DIR / "gau.txt"), "--threads", safe_threads] + targets, "gau.log", timeout=300, proxy_url=proxy_url)
     if toggles.get("run_katana", True) and alive_file.exists() and alive_file.stat().st_size > 0:
+        katana_depth = int(toggles.get("katana_depth", 3))
         # Inject Header into Katana
-        await run_tool(["/usr/local/bin/katana", "-list", str(alive_file), "-jc", "-j", "-o", str(WORKSPACE_DIR / "katana.json"), "-c", safe_threads, "-rl", str(rate_limit)] + h_flag, "katana.log", timeout=600, proxy_url=proxy_url)
+        await run_tool(["/usr/local/bin/katana", "-list", str(alive_file), "-jc", "-silent", "-d", str(katana_depth), "-c", safe_threads, "-rl", str(rate_limit)] + h_flag, "katana.txt", timeout=1800, cold_start_timeout=3600, proxy_url=proxy_url)
 
-        if toggles.get("run_js_secrets", False) and (WORKSPACE_DIR / "katana.json").exists():
+        if toggles.get("run_js_secrets", False) and (WORKSPACE_DIR / "katana.txt").exists():
             await ws_manager.broadcast("[*] Running JS Secret Hunting...")
             js_urls = set()
-            for line in (WORKSPACE_DIR / "katana.json").read_text(errors="ignore").splitlines():
-                try:
-                    o = json.loads(line)
-                    ep = o.get("request", {}).get("endpoint") or o.get("endpoint", "")
-                    if ep.split("?")[0].endswith(".js"):
-                        js_urls.add(ep)
-                except: pass
+            for line in (WORKSPACE_DIR / "katana.txt").read_text(errors="ignore").splitlines():
+                ep = line.strip()
+                if ep.split("?")[0].endswith(".js"):
+                    js_urls.add(ep)
             if js_urls:
                 (WORKSPACE_DIR / "js_targets.txt").write_text("\n".join(js_urls))
                 js_cmd = ["/usr/local/bin/nuclei", "-l", str(WORKSPACE_DIR / "js_targets.txt"), "-tags", "exposure,token", "-j", "-o", str(WORKSPACE_DIR / "nuclei_js.json"), "-c", safe_threads, "-rl", str(rate_limit)]
@@ -398,7 +418,7 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
         if recursion_depth > 0:
             ffuf_cmd.extend(["-recursion", "-recursion-depth", str(recursion_depth)])
             await ws_manager.broadcast(f"[*] Recursive Fuzzing enabled: depth={recursion_depth}")
-        await run_tool(ffuf_cmd, "ffuf.log", timeout=14400, proxy_url=proxy_url)
+        await run_tool(ffuf_cmd, "ffuf.log", timeout=1800, cold_start_timeout=3600, proxy_url=proxy_url)
 
     # Hidden Parameter Discovery (x8)
     if "parameters" in wordlist_categories and alive_file.exists() and wordlist_file.exists():
@@ -428,15 +448,12 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
                 for line in (WORKSPACE_DIR / "gau.txt").read_text(errors="ignore").splitlines():
                     if "?" in line: line = line.split("?")[0]
                     if is_clean_url(line): x8_urls.add(line.strip())
-            if (WORKSPACE_DIR / "katana.json").exists():
-                for line in (WORKSPACE_DIR / "katana.json").read_text(errors="ignore").splitlines():
-                    try:
-                        o = json.loads(line)
-                        ep = o.get("request", {}).get("endpoint") or o.get("endpoint")
-                        if ep:
-                            if "?" in ep: ep = ep.split("?")[0]
-                            if is_clean_url(ep): x8_urls.add(ep.strip())
-                    except: pass
+            if (WORKSPACE_DIR / "katana.txt").exists():
+                for line in (WORKSPACE_DIR / "katana.txt").read_text(errors="ignore").splitlines():
+                    ep = line.strip()
+                    if ep:
+                        if "?" in ep: ep = ep.split("?")[0]
+                        if is_clean_url(ep): x8_urls.add(ep)
         except: pass
         
         if x8_urls:
@@ -458,12 +475,12 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
     if toggles.get("run_dalfox", False) and params_file.exists() and params_file.stat().st_size > 0:
         dalfox_cmd = ["/usr/local/bin/dalfox", "file", str(params_file), "-b", "skip-bav", "--silence", "--format", "json", "--mining-dict=false", "-o", str(WORKSPACE_DIR / "dalfox.json")]
         if custom_headers: dalfox_cmd.extend(h_flag)
-        await run_tool(dalfox_cmd, "dalfox.log", timeout=14400, proxy_url=proxy_url)
+        await run_tool(dalfox_cmd, "dalfox.log", timeout=1800, cold_start_timeout=3600, proxy_url=proxy_url)
     
     if toggles.get("run_nucleidast", False) and params_file.exists() and params_file.stat().st_size > 0:
         nucleidast_cmd = ["/usr/local/bin/nuclei", "-l", str(params_file), "-tags", "sqli,redirect,fuzz", "-j", "-o", str(WORKSPACE_DIR / "nucleidast.json"), "-c", safe_threads, "-rl", str(rate_limit), "-mhe", "100", "-timeout", "10"]
         nucleidast_cmd.extend(h_flag)
-        await run_tool(nucleidast_cmd, "nucleidast.log", timeout=7200, proxy_url=proxy_url)
+        await run_tool(nucleidast_cmd, "nucleidast.log", timeout=1800, cold_start_timeout=3600, proxy_url=proxy_url)
 
     await ws_manager.broadcast("[PROGRESS] 5/6: Vulnerability Scanning")
     if toggles.get("run_nuclei", True) and alive_file.exists() and alive_file.stat().st_size > 0:
@@ -481,7 +498,7 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
         nuclei_cmd.extend(["-rl", str(rate_limit)])
         nuclei_cmd.extend(["-mhe", "100", "-timeout", "10"])
         nuclei_cmd.extend(h_flag)
-        await run_tool(nuclei_cmd, "nuclei.log", timeout=14400, proxy_url=proxy_url)
+        await run_tool(nuclei_cmd, "nuclei.log", timeout=1800, cold_start_timeout=3600, proxy_url=proxy_url)
 
     await ws_manager.broadcast("[PROGRESS] 6/6: Context-Aware AI Triage")
     from app.services.parser import parse_ports, parse_ffuf, parse_vhost, parse_whatweb, parse_katana, parse_nuclei, parse_dalfox, parse_wafw00f, analyze_findings_with_ai, generate_ai_assessment, validate_high_value_findings, parse_favicon
@@ -565,3 +582,14 @@ async def run_pipeline(targets, threads, scan_depth, api_url, api_key, model_nam
             urllib.request.urlopen(req, data=json.dumps(payload).encode("utf-8"), timeout=10)
         except Exception as e:
             await ws_manager.broadcast(f"[!] Failed to send webhook: {e}")
+
+    # Automated Cleanup of Massive Files
+    try:
+        import os
+        katana_txt = WORKSPACE_DIR / "katana.txt"
+        if katana_txt.exists():
+            os.remove(katana_txt)
+        await ws_manager.broadcast("[*] Cleanup: Removed massive Katana artifact files from storage.")
+    except Exception as e:
+        await ws_manager.broadcast(f"[*] Warning: Could not clean up Katana files: {e}")
+
